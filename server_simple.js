@@ -66,6 +66,16 @@ const aiCategoryQueue = new Map();
 let activeRefreshJobId = null;
 let aiCategoryWorkerRunning = false;
 const AI_CATEGORY_BATCH_SIZE = Math.max(1, Math.min(20, Number(process.env.DOUBAO_CATEGORY_BATCH_SIZE || 10)));
+const DEFAULT_BROWSER_CANDIDATES = [
+    process.env.PUPPETEER_EXECUTABLE_PATH,
+    process.env.CHROME_PATH,
+    '/usr/bin/google-chrome',
+    '/usr/bin/google-chrome-stable',
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser',
+    '/snap/bin/chromium',
+    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+].filter(Boolean);
 
 // 中间件
 app.use(express.json());
@@ -138,6 +148,12 @@ function requireAdmin(req, res, next) {
 }
 
 function launchBrowser() {
+    const executablePath = DEFAULT_BROWSER_CANDIDATES.find(candidate => fs.existsSync(candidate));
+
+    if (!executablePath) {
+        throw new Error('未找到可用的 Chrome/Chromium，请设置 PUPPETEER_EXECUTABLE_PATH');
+    }
+
     return puppeteer.launch({
         headless: "new",
         protocolTimeout: 60000,
@@ -157,7 +173,7 @@ function launchBrowser() {
             '--disable-renderer-backgrounding',
             '--memory-pressure-off'
         ],
-        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || process.env.CHROME_PATH || "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+        executablePath
     });
 }
 
