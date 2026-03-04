@@ -3,6 +3,7 @@
 node_modules/
 data/monitor.db
 data/*.db
+data/*.db-*
 data/*.sqlite
 logs/
 *.log
