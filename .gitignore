@@ -1,0 +1,12 @@
+.env
+.env.local
+node_modules/
+data/monitor.db
+data/*.db
+data/*.sqlite
+logs/
+*.log
+debug_screenshot.png
+.DS_Store
+.idea/
+.vscode/

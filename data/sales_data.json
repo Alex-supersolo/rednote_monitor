@@ -1,0 +1,16 @@
+[
+  {
+    "product_id": 1,
+    "product_sales": 2589,
+    "shop_sales": 25000,
+    "crawl_date": "2026-03-02",
+    "crawl_time": "2026-03-02T01:54:48.969Z"
+  },
+  {
+    "product_id": 1,
+    "product_sales": 2712,
+    "shop_sales": 25000,
+    "crawl_date": "2026-03-03",
+    "crawl_time": "2026-03-03T14:54:31.615Z"
+  }
+]

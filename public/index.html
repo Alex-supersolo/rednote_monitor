@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Think Unlimited | 小红书选品监控系统</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="authShell" class="auth-shell">
+        <section class="auth-card">
+            <div class="auth-showcase">
+                <div class="auth-showcase-top">
+                    <div class="auth-brand-row">
+                        <div class="auth-brand-mark">
+                            <img src="/brand-logo-dark.png" alt="Think Unlimited">
+                        </div>
+                        <span class="auth-brand-badge">Brand Workspace</span>
+                    </div>
+                    <div class="auth-copy">
+                        <p class="section-kicker">Research Workspace</p>
+                        <h1>小红书<br>选品监控系统</h1>
+                        <p>面向内容电商与个体创业者的选品工作台。统一沉淀商品样本、连续追踪销量变化、快速识别潜力商品，让选品判断从经验驱动走向数据驱动。</p>
+                    </div>
+                </div>
+                <div class="auth-feature-list">
+                    <div class="auth-feature-card">
+                        <strong>商品总库</strong>
+                        <span>高潜力选品库，让你选品有依据。</span>
+                    </div>
+                    <div class="auth-feature-card">
+                        <strong>趋势监控</strong>
+                        <span>持续记录商品与店铺销量，在最早期发现爆品。</span>
+                    </div>
+                    <div class="auth-feature-card">
+                        <strong>个人选品池</strong>
+                        <span>支持将商品库产品添加到个人选品池，特殊关注。</span>
+                    </div>
+                </div>
+                <div class="auth-brand-footer">超级个体研究院丨赋能每一个个体成为自己的CEO</div>
+            </div>
+
+            <div class="auth-form-panel">
+                <div class="auth-panel-brand">
+                    <div>
+                        <p class="section-kicker">Member Access</p>
+                        <strong>进入你的监控工作台</strong>
+                        <span class="auth-panel-subtitle">登录后进入商品总库与个人选品池，注册需填写有效邀请码。</span>
+                    </div>
+                </div>
+
+                <div class="auth-tabs">
+                    <button class="auth-tab-btn active" type="button" onclick="switchAuthMode('login', this)">登录</button>
+                    <button class="auth-tab-btn" type="button" onclick="switchAuthMode('register', this)">注册</button>
+                </div>
+
+                <form id="loginPanel" class="auth-panel active" onsubmit="handleLogin(event)">
+                    <label class="field-label" for="loginUsername">用户名</label>
+                    <input id="loginUsername" class="auth-input" type="text" autocomplete="username" placeholder="输入你的用户名">
+                    <label class="field-label" for="loginPassword">密码</label>
+                    <input id="loginPassword" class="auth-input" type="password" autocomplete="current-password" placeholder="输入登录密码">
+                    <button class="btn btn-primary auth-submit" type="submit">登录进入工作台</button>
+                </form>
+
+                <form id="registerPanel" class="auth-panel" onsubmit="handleRegister(event)">
+                    <label class="field-label" for="registerUsername">用户名</label>
+                    <input id="registerUsername" class="auth-input" type="text" autocomplete="username" placeholder="2-24 位，支持中文/字母/数字">
+                    <label class="field-label" for="registerPassword">密码</label>
+                    <input id="registerPassword" class="auth-input" type="password" autocomplete="new-password" placeholder="至少 6 位">
+                    <label class="field-label" for="registerInviteCode">邀请码</label>
+                    <input id="registerInviteCode" class="auth-input" type="text" autocomplete="one-time-code" placeholder="输入管理员提供的邀请码">
+                    <button class="btn btn-primary auth-submit" type="submit">注册并进入工作台</button>
+                </form>
+            </div>
+        </section>
+    </div>
+
+    <div id="appShell" class="app-shell" hidden>
+        <header class="topbar">
+            <div class="topbar-left">
+                <div class="brand-logo brand-logo-dark" aria-label="Think Unlimited">
+                    <div class="brand-logo-mark">
+                        <svg viewBox="0 0 80 80" role="img" focusable="false" aria-hidden="true">
+                            <rect x="2" y="2" width="76" height="76" rx="16"></rect>
+                            <path d="M18 40c0-8.8 7.2-16 16-16 10.9 0 14.2 16 22 16 3.3 0 6-2.7 6-6s-2.7-6-6-6c-4.6 0-7.8 5.4-12.8 10.3C38.1 43 34.8 48 26.8 48 21.9 48 18 44.1 18 40Zm44 0c0 8.8-7.2 16-16 16-10.9 0-14.2-16-22-16-3.3 0-6 2.7-6 6s2.7 6 6 6c4.6 0 7.8-5.4 12.8-10.3C41.9 37 45.2 32 53.2 32 58.1 32 62 35.9 62 40Z"></path>
+                        </svg>
+                    </div>
+                    <div class="brand-logo-text">
+                        <span class="brand-line brand-line-top">Think<span class="brand-star">✦</span></span>
+                        <span class="brand-line brand-line-bottom">Unlimited</span>
+                    </div>
+                </div>
+                <div class="workspace-copy">
+                    <h1>超级个体研究院 · 小红书选品监控系统</h1>
+                    <p class="workspace-subtitle">商品总库 / 个人选品池</p>
+                </div>
+            </div>
+            <div class="topbar-right">
+                <div class="status-chip">
+                    <span class="status-dot"></span>
+                    <span id="heroLastSync">等待数据</span>
+                </div>
+                <div class="user-chip">
+                    <span class="user-chip-label">当前用户</span>
+                    <strong id="currentUsername">-</strong>
+                    <span id="currentUserRole" class="role-badge">member</span>
+                </div>
+                <button id="adminEntryButton" onclick="goToAdmin()" class="btn btn-secondary" hidden>管理后台</button>
+                <button id="workspaceEntryButton" onclick="goToWorkspace()" class="btn btn-secondary" hidden>返回工作台</button>
+                <button onclick="refreshAllData()" id="refreshAllButton" class="btn btn-secondary">刷新全部数据</button>
+                <button onclick="logout()" class="btn btn-ghost">退出</button>
+            </div>
+        </header>
+
+        <section id="refreshJobBar" class="sync-banner" hidden>
+            <div class="sync-banner-copy">
+                <strong id="refreshJobTitle">后台刷新中</strong>
+                <span id="refreshJobText">正在准备刷新任务...</span>
+            </div>
+            <div class="sync-banner-progress">
+                <div class="sync-banner-track">
+                    <div id="refreshJobFill" class="sync-banner-fill"></div>
+                </div>
+                <span id="refreshJobPercent">0%</span>
+            </div>
+        </section>
+
+        <section id="importJobBar" class="sync-banner" hidden>
+            <div class="sync-banner-copy">
+                <strong id="importJobTitle">后台导入中</strong>
+                <span id="importJobText">正在准备导入任务...</span>
+            </div>
+            <div class="sync-banner-progress">
+                <div class="sync-banner-track">
+                    <div id="importJobFill" class="sync-banner-fill"></div>
+                </div>
+                <span id="importJobPercent">0%</span>
+            </div>
+        </section>
+
+        <section class="dashboard-grid">
+            <aside id="dashboardSidebar" class="dashboard-sidebar">
+                <section class="panel control-panel">
+                    <div class="panel-header">
+                        <div>
+                            <p class="section-kicker">Add Monitors</p>
+                            <h3>新增监控对象</h3>
+                        </div>
+                    </div>
+
+                    <div class="input-tabs">
+                        <button class="tab-btn active" onclick="switchInputTab('single', this)">单个添加</button>
+                        <button class="tab-btn" onclick="switchInputTab('batch', this)">批量链接</button>
+                        <button class="tab-btn" onclick="switchInputTab('table', this)">表格导入</button>
+                    </div>
+
+                    <div id="singleTab" class="tab-content active">
+                        <label class="field-label" for="productUrl">商品链接 / 分享文本</label>
+                        <div class="input-group">
+                            <input type="text" id="productUrl" aria-label="商品链接或分享文本" placeholder="粘贴小红书商品链接或分享文本..." class="url-input">
+                            <button id="singleAddButton" onclick="addProduct()" class="btn btn-primary">加入商品库</button>
+                        </div>
+                        <p class="helper-copy">新商品进入商品总库后，会自动加入你的个人选品。</p>
+                    </div>
+
+                    <div id="batchTab" class="tab-content">
+                        <label class="field-label" for="batchUrls">批量链接列表</label>
+                        <div class="batch-input-group">
+                            <textarea id="batchUrls" aria-label="批量商品链接" placeholder="每行一个商品链接，适合快速搭建监控池..." class="batch-textarea"></textarea>
+                            <div class="batch-buttons">
+                                <button id="batchImportButton" onclick="importBatchUrls()" class="btn btn-primary">开始导入</button>
+                                <button onclick="clearBatchInput()" class="btn btn-secondary">清空内容</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="tableTab" class="tab-content">
+                        <label class="field-label" for="tableImportText">表格粘贴区</label>
+                        <div class="batch-input-group">
+                            <textarea id="tableImportText" aria-label="表格导入内容" placeholder="把 Excel / 飞书 / Google Sheets 表格直接粘贴到这里，我会自动从整张表里提取小红书商品链接..." class="batch-textarea"></textarea>
+                            <div class="batch-buttons">
+                                <button onclick="previewTableImport()" class="btn btn-secondary">预览链接</button>
+                                <button id="tableImportButton" onclick="importTableData()" class="btn btn-primary">导入表格商品</button>
+                            </div>
+                        </div>
+                        <div id="tableImportPreview" class="import-preview" hidden>
+                            <div class="import-preview-head">
+                                <strong id="tableImportCount">0</strong>
+                                <span>条有效链接</span>
+                            </div>
+                            <ul id="tableImportList" class="import-preview-list"></ul>
+                        </div>
+                    </div>
+
+                    <div id="batchProgress" class="batch-progress" style="display: none;">
+                        <div class="progress-bar">
+                            <div id="progressFill" class="progress-fill"></div>
+                        </div>
+                        <div id="progressText" class="progress-text">正在处理...</div>
+                    </div>
+                </section>
+            </aside>
+
+            <section class="panel main-panel">
+                <div class="panel-header">
+                    <div>
+                        <p class="section-kicker">Workspace</p>
+                        <h3 id="workspaceTitle">商品总库</h3>
+                    </div>
+                </div>
+
+                <div id="workspaceToolbar" class="workspace-toolbar">
+                    <div class="workspace-toolbar-top">
+                        <div class="workspace-toolbar-meta">
+                            <div class="board-tabs">
+                                <button id="libraryTabBtn" class="library-tab-btn active" type="button" onclick="switchWorkspaceView('library', this)">
+                                    商品总库
+                                    <span id="libraryCountBadge" class="tab-badge">0</span>
+                                </button>
+                                <button id="selectedTabBtn" class="library-tab-btn" type="button" onclick="switchWorkspaceView('selected', this)">
+                                    我的选品
+                                    <span id="selectionCountBadge" class="tab-badge">0</span>
+                                </button>
+                            </div>
+                            <div id="toolbarNote" class="toolbar-note">商品总库展示所有已进入监控池的商品，你可以把其中感兴趣的商品加入自己的选品。</div>
+                        </div>
+                        <div class="workspace-toolbar-searchbar">
+                            <div class="search-shell" id="searchShell">
+                                <span class="search-shell-icon" aria-hidden="true">
+                                    <svg viewBox="0 0 24 24" role="img" focusable="false">
+                                        <path d="M10.5 4a6.5 6.5 0 1 0 4.04 11.59l3.43 3.43a1 1 0 0 0 1.41-1.41l-3.43-3.43A6.5 6.5 0 0 0 10.5 4Zm0 2a4.5 4.5 0 1 1 0 9 4.5 4.5 0 0 1 0-9Z"></path>
+                                    </svg>
+                                </span>
+                                <input id="productSearch" class="toolbar-search-input" type="text" placeholder="搜索商品名称、快速定位监控对象" oninput="handleProductSearchInput(event)">
+                                <button id="clearSearchButton" class="search-clear-btn" type="button" onclick="clearProductSearch()" aria-label="清空搜索" hidden>
+                                    <svg viewBox="0 0 24 24" role="img" focusable="false">
+                                        <path d="M6.7 5.3a1 1 0 0 0-1.4 1.4L10.59 12l-5.3 5.3a1 1 0 1 0 1.42 1.4L12 13.41l5.3 5.3a1 1 0 0 0 1.4-1.42L13.41 12l5.3-5.3a1 1 0 0 0-1.42-1.4L12 10.59 6.7 5.3Z"></path>
+                                    </svg>
+                                </button>
+                            </div>
+                            <button class="btn btn-secondary toolbar-reset-btn" type="button" onclick="resetToolbarFilters()">重置筛选</button>
+                        </div>
+                    </div>
+                    <div class="workspace-toolbar-bottom">
+                        <div id="sortControls" class="sort-controls">
+                            <div class="toolbar-filter toolbar-filter-multiselect" id="categoryFilterWrap">
+                                <span class="toolbar-filter-label">类目筛选</span>
+                                <button id="categoryFilterTrigger" class="multi-select-trigger" type="button" aria-haspopup="true" aria-expanded="false" onclick="toggleCategoryFilterMenu()">
+                                    <span id="categoryFilterSummary" class="multi-select-summary">全部类目</span>
+                                    <span id="categoryFilterCount" class="multi-select-count" hidden>0</span>
+                                    <span class="multi-select-caret" aria-hidden="true">
+                                        <svg viewBox="0 0 20 20" role="img" focusable="false">
+                                            <path d="M5.2 7.4a1 1 0 0 1 1.4 0L10 10.8l3.4-3.4a1 1 0 1 1 1.4 1.4l-4.1 4.1a1 1 0 0 1-1.4 0L5.2 8.8a1 1 0 0 1 0-1.4Z"></path>
+                                        </svg>
+                                    </span>
+                                </button>
+                                <div id="categoryFilterMenu" class="multi-select-menu" hidden>
+                                    <div class="multi-select-menu-head">
+                                        <strong>选择类目</strong>
+                                        <button class="multi-select-clear" type="button" onclick="clearCategorySelections()">清空</button>
+                                    </div>
+                                    <div id="categoryFilterOptions" class="multi-select-options"></div>
+                                </div>
+                            </div>
+                            <div class="toolbar-filter toolbar-filter-range">
+                                <span class="toolbar-filter-label">价格区间</span>
+                                <div class="range-inputs">
+                                    <input id="minPriceFilter" class="toolbar-mini-input" type="number" min="0" step="0.01" placeholder="最低价" oninput="handleToolbarFilterChange()">
+                                    <span class="range-separator">-</span>
+                                    <input id="maxPriceFilter" class="toolbar-mini-input" type="number" min="0" step="0.01" placeholder="最高价" oninput="handleToolbarFilterChange()">
+                                </div>
+                            </div>
+                            <div class="toolbar-filter toolbar-filter-range">
+                                <span class="toolbar-filter-label">商品总销量</span>
+                                <div class="range-inputs">
+                                    <input id="minTotalSalesFilter" class="toolbar-mini-input" type="number" min="0" step="1" placeholder="最低" oninput="handleToolbarFilterChange()">
+                                    <span class="range-separator">-</span>
+                                    <input id="maxTotalSalesFilter" class="toolbar-mini-input" type="number" min="0" step="1" placeholder="最高" oninput="handleToolbarFilterChange()">
+                                </div>
+                            </div>
+                            <div class="toolbar-filter toolbar-filter-range">
+                                <span class="toolbar-filter-label">商品日销量</span>
+                                <div class="range-inputs">
+                                    <input id="minDailySalesFilter" class="toolbar-mini-input" type="number" min="0" step="1" placeholder="最低" oninput="handleToolbarFilterChange()">
+                                    <span class="range-separator">-</span>
+                                    <input id="maxDailySalesFilter" class="toolbar-mini-input" type="number" min="0" step="1" placeholder="最高" oninput="handleToolbarFilterChange()">
+                                </div>
+                            </div>
+                            <div class="toolbar-filter">
+                                <span class="toolbar-filter-label">排序</span>
+                                <select id="sortBy" aria-label="排序方式" onchange="sortTable()">
+                                    <option value="id">添加时间</option>
+                                    <option value="price">商品价格</option>
+                                    <option value="product_total_sales">商品总销量</option>
+                                    <option value="daily_product_sales">商品日销量</option>
+                                    <option value="daily_product_sales_growth">销量日增幅</option>
+                                    <option value="daily_gmv">商品日GMV</option>
+                                    <option value="shop_total_sales">店铺总销量</option>
+                                    <option value="daily_shop_sales">店铺日销量</option>
+                                </select>
+                            </div>
+                            <div class="toolbar-filter toolbar-filter-compact">
+                                <span class="toolbar-filter-label">方向</span>
+                                <select id="sortOrder" aria-label="排序方向" onchange="sortTable()">
+                                    <option value="desc">降序</option>
+                                    <option value="asc">升序</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="workspace-toolbar-foot">
+                        <div id="resultsSummary" class="results-summary">当前展示 0 条</div>
+                        <div id="activeFilterSummary" class="active-filter-summary">未启用筛选条件</div>
+                    </div>
+                </div>
+
+                <div id="productsBoard">
+                    <div class="table-container">
+                        <table id="productsTable" class="products-table">
+                            <colgroup>
+                                <col class="col-product-name" data-col="product_name">
+                                <col class="col-category" data-col="category">
+                                <col class="col-price" data-col="price">
+                                <col class="col-sales-total" data-col="product_total_sales">
+                                <col class="col-sales-daily" data-col="daily_product_sales">
+                                <col class="col-sales-growth" data-col="daily_product_sales_growth">
+                                <col class="col-gmv-daily" data-col="daily_gmv">
+                                <col class="col-shop-total" data-col="shop_total_sales">
+                                <col class="col-shop-daily" data-col="daily_shop_sales">
+                                <col class="col-created" data-col="created_at">
+                                <col class="col-updated" data-col="last_update">
+                                <col class="col-actions" data-col="actions">
+                            </colgroup>
+                            <thead>
+                                <tr>
+                                    <th data-col="product_name">商品名称</th>
+                                    <th data-col="category">商品类目</th>
+                                    <th data-col="price">价格</th>
+                                    <th data-col="product_total_sales">商品总销量</th>
+                                    <th data-col="daily_product_sales">商品日销量</th>
+                                    <th data-col="daily_product_sales_growth">销量日增幅</th>
+                                    <th data-col="daily_gmv">商品日GMV</th>
+                                    <th data-col="shop_total_sales">店铺总销量</th>
+                                    <th data-col="daily_shop_sales">店铺日销量</th>
+                                    <th data-col="created_at">添加时间</th>
+                                    <th data-col="last_update">最后更新时间</th>
+                                    <th data-col="actions" class="actions-header-cell">
+                                        <div class="actions-header">
+                                            <span>操作</span>
+                                            <div id="columnSelectorWrap" class="column-selector">
+                                                <button id="columnSelectorTrigger" class="column-selector-trigger column-selector-trigger-icon" type="button" aria-haspopup="true" aria-expanded="false" onclick="toggleColumnSelectorMenu()" aria-label="配置显示列">
+                                                    <svg viewBox="0 0 24 24" role="img" focusable="false" aria-hidden="true">
+                                                        <path d="M19.14 12.94a7.96 7.96 0 0 0 .05-.94 7.96 7.96 0 0 0-.05-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.28 7.28 0 0 0-1.63-.94l-.36-2.54A.5.5 0 0 0 13.9 2h-3.8a.5.5 0 0 0-.49.42l-.36 2.54c-.58.22-1.12.53-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.71 8.48a.5.5 0 0 0 .12.64l2.03 1.58a7.96 7.96 0 0 0-.05.94c0 .32.02.63.05.94l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32a.5.5 0 0 0 .6.22l2.39-.96c.5.41 1.05.72 1.63.94l.36 2.54a.5.5 0 0 0 .49.42h3.8a.5.5 0 0 0 .49-.42l.36-2.54c.58-.22 1.12-.53 1.63-.94l2.39.96a.5.5 0 0 0 .6-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58ZM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7Z"></path>
+                                                    </svg>
+                                                    <span id="columnSelectorCount" class="column-selector-count">10</span>
+                                                </button>
+                                                <div id="columnSelectorMenu" class="column-selector-menu" hidden>
+                                                    <div class="column-selector-head">
+                                                        <strong>显示字段</strong>
+                                                        <button class="multi-select-clear" type="button" onclick="resetColumnVisibility()">重置</button>
+                                                    </div>
+                                                    <div id="columnSelectorOptions" class="column-selector-options"></div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </th>
+                                </tr>
+                            </thead>
+                            <tbody id="productsTableBody"></tbody>
+                        </table>
+                    </div>
+                    <div id="paginationBar" class="pagination-bar" hidden>
+                        <button id="prevPageButton" class="btn btn-secondary pagination-btn" type="button" onclick="changePage(-1)">上一页</button>
+                        <div class="pagination-meta">
+                            <strong id="paginationStatus">第 1 / 1 页</strong>
+                            <span id="paginationDetail">共 0 条</span>
+                        </div>
+                        <div class="pagination-size">
+                            <label for="pageSizeSelect">每页展示</label>
+                            <select id="pageSizeSelect" class="pagination-size-select" onchange="changePageSize(this.value)">
+                                <option value="20">20</option>
+                                <option value="50">50</option>
+                                <option value="100">100</option>
+                                <option value="200">200</option>
+                            </select>
+                        </div>
+                        <button id="nextPageButton" class="btn btn-secondary pagination-btn" type="button" onclick="changePage(1)">下一页</button>
+                    </div>
+                </div>
+
+                <div id="adminBoard" class="admin-board" hidden>
+                    <div class="admin-grid">
+                        <section class="admin-card">
+                            <div class="admin-card-header">
+                                <div>
+                                    <p class="section-kicker">Invite Codes</p>
+                                    <h4>邀请码管理</h4>
+                                </div>
+                            </div>
+                            <div class="admin-form-grid">
+                                <input id="newInviteCode" class="auth-input" type="text" placeholder="自定义邀请码，可留空自动生成">
+                                <input id="newInviteDescription" class="auth-input" type="text" placeholder="备注，例如：内测用户 / 合作伙伴">
+                                <input id="newInviteMaxUses" class="auth-input" type="number" min="1" value="1" placeholder="默认 1 次，表示 1 人 1 码">
+                                <button onclick="createInviteCodeItem()" class="btn btn-primary">创建邀请码</button>
+                            </div>
+                            <div class="admin-table-wrap">
+                                <table class="admin-table">
+                                    <thead>
+                                        <tr>
+                                            <th>邀请码</th>
+                                            <th>备注</th>
+                                            <th>已使用/上限</th>
+                                            <th>状态</th>
+                                            <th>操作</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="inviteCodesTableBody"></tbody>
+                                </table>
+                            </div>
+                        </section>
+
+                        <section class="admin-card">
+                            <div class="admin-card-header">
+                                <div>
+                                    <p class="section-kicker">Users</p>
+                                    <h4>用户管理</h4>
+                                </div>
+                            </div>
+                            <div class="admin-table-wrap">
+                                <table class="admin-table">
+                                    <thead>
+                                        <tr>
+                                            <th>用户名</th>
+                                            <th>角色</th>
+                                            <th>状态</th>
+                                            <th>选品数</th>
+                                            <th>注册时间</th>
+                                            <th>操作</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="usersTableBody"></tbody>
+                                </table>
+                            </div>
+                        </section>
+
+                        <section class="admin-card admin-card-wide">
+                            <div class="admin-card-header">
+                                <div>
+                                    <p class="section-kicker">Product Categories</p>
+                                    <h4>商品类目管理</h4>
+                                </div>
+                                <div class="admin-card-side">
+                                    <p class="admin-card-note">仅管理员可修改商品类目，修改后会立即影响商品总库筛选和展示。</p>
+                                    <div id="adminCategoryStatusSummary" class="admin-status-summary"></div>
+                                </div>
+                            </div>
+                            <div class="admin-table-wrap">
+                                <table class="admin-table">
+                                    <thead>
+                                        <tr>
+                                            <th>商品</th>
+                                            <th>当前类目</th>
+                                            <th>类目状态</th>
+                                            <th>修改为</th>
+                                            <th>操作</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="adminProductCategoriesTableBody"></tbody>
+                                </table>
+                            </div>
+                        </section>
+                    </div>
+                </div>
+            </section>
+        </section>
+    </div>
+
+    <div id="loading" class="loading" style="display: none;">
+        <div class="spinner"></div>
+        <p>正在同步监控数据...</p>
+    </div>
+
+    <div id="message" class="message" style="display: none;"></div>
+
+    <div id="trendModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div>
+                    <p class="section-kicker">Trend Review</p>
+                    <h2 id="trendTitle">商品销量趋势</h2>
+                </div>
+                <button class="modal-close" onclick="closeTrendModal()" aria-label="关闭">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="chart-container">
+                    <canvas id="trendChart"></canvas>
+                </div>
+                <div class="trend-info">
+                    <div class="trend-stats">
+                        <div class="stat-item">
+                            <span class="stat-label">总销量</span>
+                            <span id="totalSales" class="stat-value">-</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">平均日销量</span>
+                            <span id="avgDailySales" class="stat-value">-</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">最高日销量</span>
+                            <span id="maxDailySales" class="stat-value">-</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">监控天数</span>
+                            <span id="monitorDays" class="stat-value">-</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
