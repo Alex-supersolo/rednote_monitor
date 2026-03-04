@@ -667,13 +667,15 @@ async function listProductsWithMetrics(userId = null, options = {}) {
         const latestDayBeforeYesterday = pickLatest(productSalesRows.filter(row => row.crawl_date === dayBeforeYesterday));
         const productTotalSales = latestToday ? latestToday.product_sales : product.productSales;
         const shopTotalSales = latestToday ? latestToday.shop_sales : product.shopSales;
-        const dailyProductSales = latestToday && latestYesterday
+        const hasDailyProductBaseline = Boolean(latestToday && latestYesterday);
+        const hasDailyShopBaseline = Boolean(latestToday && latestYesterday);
+        const dailyProductSales = hasDailyProductBaseline
             ? Math.max(0, latestToday.product_sales - latestYesterday.product_sales)
             : 0;
         const previousDailyProductSales = latestYesterday && latestDayBeforeYesterday
             ? Math.max(0, latestYesterday.product_sales - latestDayBeforeYesterday.product_sales)
             : 0;
-        const dailyShopSales = latestToday && latestYesterday
+        const dailyShopSales = hasDailyShopBaseline
             ? Math.max(0, latestToday.shop_sales - latestYesterday.shop_sales)
             : 0;
         const dailyProductSalesGrowth = previousDailyProductSales > 0
@@ -685,9 +687,11 @@ async function listProductsWithMetrics(userId = null, options = {}) {
             product_total_sales: productTotalSales,
             shop_total_sales: shopTotalSales,
             daily_product_sales: dailyProductSales,
+            daily_product_sales_ready: hasDailyProductBaseline,
             previous_daily_product_sales: previousDailyProductSales,
             daily_product_sales_growth: dailyProductSalesGrowth,
             daily_shop_sales: dailyShopSales,
+            daily_shop_sales_ready: hasDailyShopBaseline,
             daily_gmv: dailyProductSales * (product.price || 0),
             last_update: latestToday ? latestToday.crawl_time : (product.updated_at || product.created_at),
             shop_name: product.shopName || '未知店铺',

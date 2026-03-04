@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Think Unlimited | 小红书选品监控系统</title>
-    <link rel="icon" href="data:,">
+    <link rel="icon" type="image/png" href="/favicon-brand.png?v=20260305">
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -338,7 +338,18 @@
                                     <th data-col="category">商品类目</th>
                                     <th data-col="price">价格</th>
                                     <th data-col="product_total_sales">商品总销量</th>
-                                    <th data-col="daily_product_sales">商品日销量</th>
+                                    <th data-col="daily_product_sales">
+                                        <span class="th-label-with-tip">
+                                            <span>商品日销量</span>
+                                            <button
+                                                type="button"
+                                                class="th-tip-icon"
+                                                title="说明：商品销量过万后，平台通常只展示如 1.5万+ 这类区间值，日销量为估算值；新商品首次导入当天暂无对比基线，会显示“首日”。"
+                                                aria-label="商品日销量说明">
+                                                ?
+                                            </button>
+                                        </span>
+                                    </th>
                                     <th data-col="daily_product_sales_growth">销量日增幅</th>
                                     <th data-col="daily_gmv">商品日GMV</th>
                                     <th data-col="shop_total_sales">店铺总销量</th>

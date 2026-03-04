@@ -639,8 +639,8 @@ function renderProductRow(product) {
         '<td data-col="category"><span class="category-pill">' + escapeHtml(getProductCategory(product)) + '</span></td>' +
         '<td data-col="price">¥' + (product.price || 0).toFixed(2) + '</td>' +
         '<td data-col="product_total_sales">' + formatNumber(product.product_total_sales) + '</td>' +
-        '<td data-col="daily_product_sales" class="' + getDeltaClass(product.daily_product_sales) + '">' + formatNumber(product.daily_product_sales) + '</td>' +
-        '<td data-col="daily_product_sales_growth" class="' + getGrowthClass(product.daily_product_sales_growth) + '">' + formatDailyGrowth(product.daily_product_sales_growth, product.previous_daily_product_sales, product.daily_product_sales) + '</td>' +
+        '<td data-col="daily_product_sales" class="' + getDeltaClass(product.daily_product_sales_ready ? product.daily_product_sales : null) + '">' + renderDailyProductSales(product) + '</td>' +
+        '<td data-col="daily_product_sales_growth" class="' + getGrowthClass(product.daily_product_sales_growth) + '">' + formatDailyGrowth(product.daily_product_sales_growth, product.previous_daily_product_sales, product.daily_product_sales, product.daily_product_sales_ready) + '</td>' +
         '<td data-col="daily_gmv">¥' + formatCurrency(product.daily_gmv || 0) + '</td>' +
         '<td data-col="shop_total_sales">' + formatNumber(product.shop_total_sales) + '</td>' +
         '<td data-col="daily_shop_sales" class="' + getDeltaClass(product.daily_shop_sales) + '">' + formatNumber(product.daily_shop_sales) + '</td>' +
@@ -1009,7 +1009,10 @@ async function showTrend(id) {
         setText('totalSales', formatNumber(data.totalSales));
         setText('avgDailySales', formatNumber(data.avgDailySales));
         setText('maxDailySales', formatNumber(data.maxDailySales));
-        setText('monitorDays', data.monitorDays + ' 天');
+        const hasFirstDayWithoutBaseline = Array.isArray(data.chartData?.dailySales)
+            && data.chartData.dailySales.length > 0
+            && data.chartData.dailySales[0] === null;
+        setText('monitorDays', hasFirstDayWithoutBaseline ? `${data.monitorDays} 天（首日无对比基线）` : `${data.monitorDays} 天`);
         renderTrendChart(data.chartData);
     } catch (error) {
         showMessage('获取趋势数据失败: ' + error.message, 'error');
@@ -1045,6 +1048,7 @@ function renderTrendChart(chartData) {
                     backgroundColor: 'rgba(245, 158, 11, 0.14)',
                     tension: 0.4,
                     fill: true,
+                    spanGaps: true,
                     yAxisID: 'y1'
                 }
             ]
@@ -1090,7 +1094,19 @@ function renderTrendChart(chartData) {
                     titleColor: '#111827',
                     bodyColor: '#4b5563',
                     borderColor: 'rgba(203, 213, 225, 0.95)',
-                    borderWidth: 1
+                    borderWidth: 1,
+                    callbacks: {
+                        label(context) {
+                            const value = context.raw;
+                            if (context.dataset.label === '日销量' && (value === null || value === undefined)) {
+                                return '日销量: 首日（暂无对比基线）';
+                            }
+                            if (typeof value === 'number') {
+                                return `${context.dataset.label}: ${formatNumber(value)}`;
+                            }
+                            return `${context.dataset.label}: --`;
+                        }
+                    }
                 }
             }
         }
@@ -1203,7 +1219,11 @@ function formatCurrency(num) {
     return Math.round(num).toLocaleString();
 }
 
-function formatDailyGrowth(growthValue, previousDailySales, currentDailySales) {
+function formatDailyGrowth(growthValue, previousDailySales, currentDailySales, hasDailyBaseline = true) {
+    if (!hasDailyBaseline) {
+        return '首日';
+    }
+
     if (Number.isFinite(growthValue)) {
         const prefix = growthValue > 0 ? '+' : '';
         return prefix + growthValue.toFixed(1) + '%';
@@ -1276,6 +1296,10 @@ function renderTimeCell(dateStr) {
 }
 
 function getDeltaClass(value) {
+    if (!Number.isFinite(value)) {
+        return '';
+    }
+
     if (value > 0) {
         return 'positive';
     }
@@ -1283,6 +1307,14 @@ function getDeltaClass(value) {
         return 'negative';
     }
     return '';
+}
+
+function renderDailyProductSales(product) {
+    if (!product.daily_product_sales_ready) {
+        return '<span class="metric-pending" title="首日监控暂无昨日对比基线，暂不展示精确日销量。">首日</span>';
+    }
+
+    return formatNumber(product.daily_product_sales);
 }
 
 function getGrowthClass(value) {

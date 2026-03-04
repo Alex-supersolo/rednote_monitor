@@ -1341,6 +1341,33 @@ button {
     white-space: nowrap;
 }
 
+.th-label-with-tip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.th-tip-icon {
+    width: 16px;
+    height: 16px;
+    border-radius: 999px;
+    border: 1px solid #cbd5e1;
+    background: #ffffff;
+    color: #64748b;
+    font-size: 0.68rem;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: help;
+    padding: 0;
+}
+
+.th-tip-icon:hover {
+    border-color: #94a3b8;
+    color: #475569;
+}
+
 .products-table tbody tr:hover,
 .admin-table tbody tr:hover {
     background: #f8fbff;
@@ -1481,6 +1508,11 @@ button {
 
 .products-table td:last-child {
     padding-right: 14px;
+}
+
+.metric-pending {
+    color: #94a3b8;
+    font-size: 0.78rem;
 }
 
 .is-column-hidden {

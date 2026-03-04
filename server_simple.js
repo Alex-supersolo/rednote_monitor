@@ -1533,8 +1533,8 @@ app.get('/api/products/:id/trend', requireAuth, async (req, res) => {
             chartData.dates.push(dateStr);
             chartData.totalSales.push(data.product_sales);
 
-            // 计算日销量（除了第一天）
-            let dailySales = 0;
+            // 计算日销量（首日没有对比基线，返回 null）
+            let dailySales = null;
             if (index > 0) {
                 dailySales = Math.max(0, data.product_sales - previousSales);
                 totalDailySales += dailySales;
