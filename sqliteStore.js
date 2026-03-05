@@ -51,6 +51,26 @@ function formatLocalDateOffset(offsetDays = 0, baseDate = new Date()) {
     return formatLocalDate(nextDate);
 }
 
+function normalizeSnapshotDateKey(rawDate) {
+    const input = String(rawDate || '').trim();
+    if (!input) {
+        return '';
+    }
+
+    const plainDateMatch = input.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+    if (plainDateMatch) {
+        const [, year, month, day] = plainDateMatch;
+        return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    }
+
+    const parsed = new Date(input);
+    if (Number.isNaN(parsed.getTime())) {
+        return '';
+    }
+
+    return formatLocalDate(parsed);
+}
+
 function normalizeVisibilityScope(value) {
     return value === 'private' ? 'private' : 'public';
 }
@@ -784,7 +804,12 @@ async function listProductsWithMetrics(userId = null, options = {}) {
         });
         const latestSnapshot = orderedRows.length > 0 ? orderedRows[orderedRows.length - 1] : null;
         const byDateRows = new Map();
-        orderedRows.forEach(row => byDateRows.set(row.crawl_date, row));
+        orderedRows.forEach(row => {
+            const normalizedDate = normalizeSnapshotDateKey(row.crawl_date);
+            if (normalizedDate) {
+                byDateRows.set(normalizedDate, row);
+            }
+        });
         const todaySnapshot = byDateRows.get(todayDate) || null;
         const yesterdaySnapshot = byDateRows.get(yesterdayDate) || null;
         const dayBeforeYesterdaySnapshot = byDateRows.get(dayBeforeYesterdayDate) || null;

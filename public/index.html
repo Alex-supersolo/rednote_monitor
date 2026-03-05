@@ -149,47 +149,15 @@
                         </div>
                     </div>
 
-                    <div class="input-tabs">
-                        <button class="tab-btn active" onclick="switchInputTab('single', this)">单个添加</button>
-                        <button class="tab-btn" onclick="switchInputTab('batch', this)">批量链接</button>
-                        <button class="tab-btn" onclick="switchInputTab('table', this)">表格导入</button>
-                    </div>
-
-                    <div id="singleTab" class="tab-content active">
-                        <label class="field-label" for="productUrl">商品链接 / 分享文本</label>
-                        <div class="input-group">
-                            <input type="text" id="productUrl" aria-label="商品链接或分享文本" placeholder="粘贴小红书商品链接或分享文本..." class="url-input">
-                            <button id="singleAddButton" onclick="addProduct()" class="btn btn-primary">加入商品库</button>
-                        </div>
-                        <p id="addProductHelper" class="helper-copy">管理员添加的新商品会进入商品总库；普通用户添加仅进入个人选品池。</p>
-                    </div>
-
-                    <div id="batchTab" class="tab-content">
+                    <div id="batchTab" class="tab-content active">
                         <label class="field-label" for="batchUrls">批量链接列表</label>
+                        <p id="addProductHelper" class="helper-copy">仅支持批量链接导入。管理员导入进入商品总库；普通用户导入仅进入个人选品池。</p>
                         <div class="batch-input-group">
                             <textarea id="batchUrls" aria-label="批量商品链接" placeholder="每行一个商品链接，适合快速搭建监控池..." class="batch-textarea"></textarea>
                             <div class="batch-buttons">
                                 <button id="batchImportButton" onclick="importBatchUrls()" class="btn btn-primary">开始导入</button>
                                 <button onclick="clearBatchInput()" class="btn btn-secondary">清空内容</button>
                             </div>
-                        </div>
-                    </div>
-
-                    <div id="tableTab" class="tab-content">
-                        <label class="field-label" for="tableImportText">表格粘贴区</label>
-                        <div class="batch-input-group">
-                            <textarea id="tableImportText" aria-label="表格导入内容" placeholder="把 Excel / 飞书 / Google Sheets 表格直接粘贴到这里，我会自动从整张表里提取小红书商品链接..." class="batch-textarea"></textarea>
-                            <div class="batch-buttons">
-                                <button onclick="previewTableImport()" class="btn btn-secondary">预览链接</button>
-                                <button id="tableImportButton" onclick="importTableData()" class="btn btn-primary">导入表格商品</button>
-                            </div>
-                        </div>
-                        <div id="tableImportPreview" class="import-preview" hidden>
-                            <div class="import-preview-head">
-                                <strong id="tableImportCount">0</strong>
-                                <span>条有效链接</span>
-                            </div>
-                            <ul id="tableImportList" class="import-preview-list"></ul>
                         </div>
                     </div>
 

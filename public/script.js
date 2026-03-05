@@ -654,16 +654,20 @@ function updateWorkspaceChrome() {
 function updateAddProductHelper() {
     const helper = document.getElementById('addProductHelper');
     const addButton = document.getElementById('singleAddButton');
-    if (!helper || !addButton) {
+    if (!helper) {
         return;
     }
 
     if (isAdminRoute()) {
-        helper.textContent = '新增商品会进入商品总库并自动加入你的个人选品，用于后续统一监控。';
-        addButton.textContent = '加入商品库';
+        helper.textContent = '仅支持批量链接导入。管理员导入的商品会进入商品总库并自动加入个人选品。';
+        if (addButton) {
+            addButton.textContent = '加入商品库';
+        }
     } else {
-        helper.textContent = '你添加的商品仅进入“我的选品池”，不会展示到商品总库，也不会被其他用户看到。';
-        addButton.textContent = '加入我的选品';
+        helper.textContent = '仅支持批量链接导入。你导入的商品仅进入“我的选品池”，不会展示到商品总库。';
+        if (addButton) {
+            addButton.textContent = '加入我的选品';
+        }
     }
 }
 
@@ -1439,6 +1443,9 @@ function renderDailyProductSales(product) {
 
 function renderYesterdayProductSales(product) {
     if (!product.yesterday_product_sales_ready) {
+        if (Number.isFinite(product.daily_product_sales_growth) && Number.isFinite(product.yesterday_product_sales)) {
+            return formatNumber(product.yesterday_product_sales);
+        }
         if (product.yesterday_product_sales_first_day) {
             return '<span class="metric-pending" title="该商品处于监控首日，暂无前日对比基线。">首日</span>';
         }
@@ -2144,16 +2151,10 @@ function setRefreshButtonState(isRunning) {
 
 function setImportButtonsState(isRunning) {
     const batchButton = document.getElementById('batchImportButton');
-    const tableButton = document.getElementById('tableImportButton');
 
     if (batchButton) {
         batchButton.disabled = isRunning;
         batchButton.textContent = isRunning ? '后台导入中...' : '开始导入';
-    }
-
-    if (tableButton) {
-        tableButton.disabled = isRunning;
-        tableButton.textContent = isRunning ? '后台导入中...' : '导入表格商品';
     }
 }
 
