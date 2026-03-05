@@ -48,6 +48,61 @@ npm start
 http://localhost:3000
 ```
 
+## 线上发布 SOP（xhsmonitor.supersolo.me）
+
+当前线上环境（已验证）：
+
+- 服务器：`47.107.177.223`
+- 项目目录：`/www/wwwroot/rednote_monitor`
+- 发布分支：`main`
+- PM2 进程名：`xiaohongshu-monitor`
+- 服务端口：`3010`
+- 对外域名：`http://xhsmonitor.supersolo.me`
+
+标准发布步骤（在服务器终端执行）：
+
+```bash
+cd /www/wwwroot/rednote_monitor
+
+# 首次可能遇到 git 安全目录报错，先执行一次
+git config --global --add safe.directory /www/wwwroot/rednote_monitor
+
+git fetch origin
+git pull --ff-only origin main
+git rev-parse --short HEAD
+
+# 生产依赖安装（推荐 --omit=dev）
+npm install --omit=dev
+
+# 重启并加载最新环境变量
+pm2 restart xiaohongshu-monitor --update-env || npx pm2 restart xiaohongshu-monitor --update-env
+pm2 list || npx pm2 list
+```
+
+发布后验证：
+
+```bash
+# 本机健康检查
+curl -s http://127.0.0.1:3010/health
+
+# 本机页面内容检查（示例：检查新前端标记）
+curl -s http://127.0.0.1:3010/ | grep -n "addProductHelper"
+
+# 域名检查（确认反代已指向当前服务）
+curl -s http://xhsmonitor.supersolo.me/ | grep -n "addProductHelper"
+```
+
+常见问题：
+
+- `fatal: detected dubious ownership`：
+  - 执行 `git config --global --add safe.directory /www/wwwroot/rednote_monitor`
+- `pm2: command not found`：
+  - 改用 `npx pm2 ...`
+- 本机已更新但域名仍旧版本：
+  - 检查反向代理配置：
+  - `grep -R "xhsmonitor.supersolo.me" /www/server/panel/vhost/nginx`
+  - `grep -R "proxy_pass" /www/server/panel/vhost/nginx`
+
 ## 环境变量
 
 可以按 [.env.example](/Users/yalin/projects/xiaohongshu-monitor2/.env.example) 创建 `.env`：
