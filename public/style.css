@@ -411,7 +411,16 @@ button {
 }
 
 .brand-logo {
-    gap: 10px;
+    gap: 0;
+}
+
+.brand-logo-image {
+    width: clamp(150px, 16vw, 220px);
+    height: auto;
+    display: block;
+    object-fit: contain;
+    object-position: left center;
+    flex: 0 0 auto;
 }
 
 .brand-logo-mark {
