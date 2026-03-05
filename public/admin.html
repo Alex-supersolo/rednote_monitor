@@ -269,7 +269,7 @@
                                 </div>
                             </div>
                             <div class="toolbar-filter toolbar-filter-range">
-                                <span class="toolbar-filter-label">商品日销量</span>
+                                <span class="toolbar-filter-label">今日销量</span>
                                 <div class="range-inputs">
                                     <input id="minDailySalesFilter" class="toolbar-mini-input" type="number" min="0" step="1" placeholder="最低" oninput="handleToolbarFilterChange()">
                                     <span class="range-separator">-</span>
@@ -281,10 +281,11 @@
                                 <select id="sortBy" aria-label="排序方式" onchange="sortTable()">
                                     <option value="id">添加时间</option>
                                     <option value="price">商品价格</option>
-                                    <option value="product_total_sales">商品总销量</option>
-                                    <option value="daily_product_sales">商品日销量</option>
+                                    <option value="daily_product_sales">今日销量</option>
+                                    <option value="yesterday_product_sales">昨日销量</option>
                                     <option value="daily_product_sales_growth">销量日增幅</option>
                                     <option value="daily_gmv">商品日GMV</option>
+                                    <option value="product_total_sales">商品总销量</option>
                                     <option value="shop_total_sales">店铺总销量</option>
                                     <option value="daily_shop_sales">店铺日销量</option>
                                 </select>
@@ -311,10 +312,11 @@
                                 <col class="col-product-name" data-col="product_name">
                                 <col class="col-category" data-col="category">
                                 <col class="col-price" data-col="price">
-                                <col class="col-sales-total" data-col="product_total_sales">
                                 <col class="col-sales-daily" data-col="daily_product_sales">
+                                <col class="col-sales-yesterday" data-col="yesterday_product_sales">
                                 <col class="col-sales-growth" data-col="daily_product_sales_growth">
                                 <col class="col-gmv-daily" data-col="daily_gmv">
+                                <col class="col-sales-total" data-col="product_total_sales">
                                 <col class="col-shop-total" data-col="shop_total_sales">
                                 <col class="col-shop-daily" data-col="daily_shop_sales">
                                 <col class="col-created" data-col="created_at">
@@ -326,25 +328,15 @@
                                     <th data-col="product_name">商品名称</th>
                                     <th data-col="category">商品类目</th>
                                     <th data-col="price">价格</th>
-                                    <th data-col="product_total_sales">商品总销量</th>
-                                    <th data-col="daily_product_sales">
-                                        <span class="th-label-with-tip">
-                                            <span>商品日销量</span>
-                                            <button
-                                                type="button"
-                                                class="th-tip-icon"
-                                                title="说明：商品销量过万后，平台通常只展示如 1.5万+ 这类区间值，日销量为估算值；新商品首次导入当天暂无对比基线，会显示“首日”。"
-                                                aria-label="商品日销量说明">
-                                                ?
-                                            </button>
-                                        </span>
-                                    </th>
+                                    <th data-col="daily_product_sales">今日销量</th>
+                                    <th data-col="yesterday_product_sales">昨日销量</th>
                                     <th data-col="daily_product_sales_growth">销量日增幅</th>
                                     <th data-col="daily_gmv">商品日GMV</th>
+                                    <th data-col="product_total_sales">商品总销量</th>
                                     <th data-col="shop_total_sales">店铺总销量</th>
                                     <th data-col="daily_shop_sales">店铺日销量</th>
                                     <th data-col="created_at">添加时间</th>
-                                    <th data-col="last_update">最后更新时间</th>
+                                    <th data-col="last_update">更新时间</th>
                                     <th data-col="actions" class="actions-header-cell">
                                         <div class="actions-header">
                                             <span>操作</span>
@@ -353,7 +345,7 @@
                                                     <svg viewBox="0 0 24 24" role="img" focusable="false" aria-hidden="true">
                                                         <path d="M19.14 12.94a7.96 7.96 0 0 0 .05-.94 7.96 7.96 0 0 0-.05-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.28 7.28 0 0 0-1.63-.94l-.36-2.54A.5.5 0 0 0 13.9 2h-3.8a.5.5 0 0 0-.49.42l-.36 2.54c-.58.22-1.12.53-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.71 8.48a.5.5 0 0 0 .12.64l2.03 1.58a7.96 7.96 0 0 0-.05.94c0 .32.02.63.05.94l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32a.5.5 0 0 0 .6.22l2.39-.96c.5.41 1.05.72 1.63.94l.36 2.54a.5.5 0 0 0 .49.42h3.8a.5.5 0 0 0 .49-.42l.36-2.54c.58-.22 1.12-.53 1.63-.94l2.39.96a.5.5 0 0 0 .6-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58ZM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7Z"></path>
                                                     </svg>
-                                                    <span id="columnSelectorCount" class="column-selector-count">10</span>
+                                                    <span id="columnSelectorCount" class="column-selector-count">8</span>
                                                 </button>
                                                 <div id="columnSelectorMenu" class="column-selector-menu" hidden>
                                                     <div class="column-selector-head">

@@ -1296,7 +1296,11 @@ button {
 }
 
 .products-table .col-sales-daily {
-    width: 7.4%;
+    width: 6.8%;
+}
+
+.products-table .col-sales-yesterday {
+    width: 6.8%;
 }
 
 .products-table .col-sales-growth,
@@ -1502,6 +1506,7 @@ button {
 .products-table td[data-col="price"],
 .products-table td[data-col="product_total_sales"],
 .products-table td[data-col="daily_product_sales"],
+.products-table td[data-col="yesterday_product_sales"],
 .products-table td[data-col="daily_product_sales_growth"],
 .products-table td[data-col="daily_gmv"],
 .products-table td[data-col="shop_total_sales"],

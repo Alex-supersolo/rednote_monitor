@@ -45,6 +45,12 @@ function formatLocalDate(date = new Date()) {
     return `${year}-${month}-${day}`;
 }
 
+function formatLocalDateOffset(offsetDays = 0, baseDate = new Date()) {
+    const nextDate = new Date(baseDate);
+    nextDate.setDate(nextDate.getDate() + offsetDays);
+    return formatLocalDate(nextDate);
+}
+
 function normalizeVisibilityScope(value) {
     return value === 'private' ? 'private' : 'public';
 }
@@ -643,6 +649,10 @@ function sortMetricProducts(items, sortBy = 'id', sortOrder = 'desc') {
                 valueA = a.daily_product_sales || 0;
                 valueB = b.daily_product_sales || 0;
                 break;
+            case 'yesterday_product_sales':
+                valueA = a.yesterday_product_sales || 0;
+                valueB = b.yesterday_product_sales || 0;
+                break;
             case 'daily_gmv':
                 valueA = a.daily_gmv || 0;
                 valueB = b.daily_gmv || 0;
@@ -759,27 +769,49 @@ async function listProductsWithMetrics(userId = null, options = {}) {
         byProduct.set(row.product_id, rows);
     }
 
+    const todayDate = formatLocalDate();
+    const yesterdayDate = formatLocalDateOffset(-1);
+    const dayBeforeYesterdayDate = formatLocalDateOffset(-2);
+    const threeDaysAgoDate = formatLocalDateOffset(-3);
+
     const metricProducts = products.map(product => {
         const productSalesRows = byProduct.get(product.id) || [];
-        const orderedRows = [...productSalesRows].sort((a, b) => new Date(a.crawl_time) - new Date(b.crawl_time));
+        const orderedRows = [...productSalesRows].sort((a, b) => {
+            if (a.crawl_date === b.crawl_date) {
+                return new Date(a.crawl_time) - new Date(b.crawl_time);
+            }
+            return String(a.crawl_date).localeCompare(String(b.crawl_date));
+        });
         const latestSnapshot = orderedRows.length > 0 ? orderedRows[orderedRows.length - 1] : null;
-        const previousSnapshot = orderedRows.length > 1 ? orderedRows[orderedRows.length - 2] : null;
-        const prePreviousSnapshot = orderedRows.length > 2 ? orderedRows[orderedRows.length - 3] : null;
+        const byDateRows = new Map();
+        orderedRows.forEach(row => byDateRows.set(row.crawl_date, row));
+        const todaySnapshot = byDateRows.get(todayDate) || null;
+        const yesterdaySnapshot = byDateRows.get(yesterdayDate) || null;
+        const dayBeforeYesterdaySnapshot = byDateRows.get(dayBeforeYesterdayDate) || null;
+        const threeDaysAgoSnapshot = byDateRows.get(threeDaysAgoDate) || null;
         const productTotalSales = latestSnapshot ? latestSnapshot.product_sales : product.productSales;
         const shopTotalSales = latestSnapshot ? latestSnapshot.shop_sales : product.shopSales;
-        const hasDailyProductBaseline = Boolean(latestSnapshot && previousSnapshot);
-        const hasDailyShopBaseline = Boolean(latestSnapshot && previousSnapshot);
-        const dailyProductSales = hasDailyProductBaseline
-            ? Math.max(0, latestSnapshot.product_sales - previousSnapshot.product_sales)
+        const hasTodayProductBaseline = Boolean(todaySnapshot && yesterdaySnapshot);
+        const hasYesterdayProductBaseline = Boolean(yesterdaySnapshot && dayBeforeYesterdaySnapshot);
+        const hasGrowthBaseline = Boolean(hasYesterdayProductBaseline && threeDaysAgoSnapshot);
+        const isTodayFirstDay = Boolean(todaySnapshot && !yesterdaySnapshot);
+        const isYesterdayFirstDay = Boolean(yesterdaySnapshot && !dayBeforeYesterdaySnapshot);
+        const isGrowthFirstDay = Boolean(hasYesterdayProductBaseline && !threeDaysAgoSnapshot);
+        const hasDailyShopBaseline = Boolean(todaySnapshot && yesterdaySnapshot);
+        const dailyProductSales = hasTodayProductBaseline
+            ? Math.max(0, todaySnapshot.product_sales - yesterdaySnapshot.product_sales)
             : 0;
-        const previousDailyProductSales = previousSnapshot && prePreviousSnapshot
-            ? Math.max(0, previousSnapshot.product_sales - prePreviousSnapshot.product_sales)
+        const yesterdayProductSales = hasYesterdayProductBaseline
+            ? Math.max(0, yesterdaySnapshot.product_sales - dayBeforeYesterdaySnapshot.product_sales)
+            : 0;
+        const previousDailyProductSales = hasGrowthBaseline
+            ? Math.max(0, dayBeforeYesterdaySnapshot.product_sales - threeDaysAgoSnapshot.product_sales)
             : 0;
         const dailyShopSales = hasDailyShopBaseline
-            ? Math.max(0, latestSnapshot.shop_sales - previousSnapshot.shop_sales)
+            ? Math.max(0, todaySnapshot.shop_sales - yesterdaySnapshot.shop_sales)
             : 0;
         const dailyProductSalesGrowth = previousDailyProductSales > 0
-            ? ((dailyProductSales - previousDailyProductSales) / previousDailyProductSales) * 100
+            ? ((yesterdayProductSales - previousDailyProductSales) / previousDailyProductSales) * 100
             : null;
 
         return {
@@ -787,9 +819,15 @@ async function listProductsWithMetrics(userId = null, options = {}) {
             product_total_sales: productTotalSales,
             shop_total_sales: shopTotalSales,
             daily_product_sales: dailyProductSales,
-            daily_product_sales_ready: hasDailyProductBaseline,
+            daily_product_sales_ready: hasTodayProductBaseline,
+            daily_product_sales_first_day: isTodayFirstDay,
+            yesterday_product_sales: yesterdayProductSales,
+            yesterday_product_sales_ready: hasYesterdayProductBaseline,
+            yesterday_product_sales_first_day: isYesterdayFirstDay,
             previous_daily_product_sales: previousDailyProductSales,
             daily_product_sales_growth: dailyProductSalesGrowth,
+            daily_product_sales_growth_ready: hasGrowthBaseline,
+            daily_product_sales_growth_first_day: isGrowthFirstDay,
             daily_shop_sales: dailyShopSales,
             daily_shop_sales_ready: hasDailyShopBaseline,
             daily_gmv: dailyProductSales * (product.price || 0),

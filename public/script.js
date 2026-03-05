@@ -33,20 +33,21 @@ let adminCategoryDrafts = {};
 let portalMode = 'client';
 
 const PRODUCTS_CACHE_KEY = 'xhs-monitor-products-cache-v4';
-const COLUMN_VISIBILITY_KEY = 'xhs-monitor-column-visibility-v1';
+const COLUMN_VISIBILITY_KEY = 'xhs-monitor-column-visibility-v2';
 const TABLE_IMPORT_URL_REGEX = /https?:\/\/(?:www\.xiaohongshu\.com\/goods-detail\/[^\s\t\r\n]+|(?:www|pages)\.xiaohongshu\.com\/goods\/[^\s\t\r\n]+|xhslink\.com\/[^\s\t\r\n]+)/ig;
 const PRODUCT_COLUMN_DEFS = [
     { key: 'product_name', label: '商品名称', locked: true, defaultVisible: true },
     { key: 'category', label: '商品类目', defaultVisible: true },
     { key: 'price', label: '价格', defaultVisible: true },
-    { key: 'product_total_sales', label: '商品总销量', defaultVisible: true },
-    { key: 'daily_product_sales', label: '商品日销量', defaultVisible: true },
+    { key: 'daily_product_sales', label: '今日销量', defaultVisible: true },
+    { key: 'yesterday_product_sales', label: '昨日销量', defaultVisible: true },
     { key: 'daily_product_sales_growth', label: '销量日增幅', defaultVisible: true },
     { key: 'daily_gmv', label: '商品日GMV', defaultVisible: true },
-    { key: 'shop_total_sales', label: '店铺总销量', defaultVisible: true },
-    { key: 'daily_shop_sales', label: '店铺日销量', defaultVisible: true },
-    { key: 'created_at', label: '添加时间', defaultVisible: true },
-    { key: 'last_update', label: '最后更新时间', defaultVisible: true },
+    { key: 'product_total_sales', label: '商品总销量', defaultVisible: true },
+    { key: 'shop_total_sales', label: '店铺总销量', defaultVisible: false },
+    { key: 'daily_shop_sales', label: '店铺日销量', defaultVisible: false },
+    { key: 'created_at', label: '添加时间', defaultVisible: false },
+    { key: 'last_update', label: '更新时间', defaultVisible: true },
     { key: 'actions', label: '操作', locked: true, defaultVisible: true }
 ];
 let visibleProductColumns = getDefaultVisibleProductColumns();
@@ -687,13 +688,13 @@ function renderProducts() {
         const emptyText = activeWorkspaceView === 'selected'
             ? '你还没有添加任何选品，先去商品总库选择感兴趣的商品。'
             : (isAdminRoute() ? '暂无监控样本，先在左侧添加商品进入商品总库。' : '商品总库暂无样本。你可以先在左侧添加商品，添加后会进入“我的选品池”仅自己可见。');
-        tbody.innerHTML = '<tr><td colspan="12" class="table-empty">' + emptyText + '</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="13" class="table-empty">' + emptyText + '</td></tr>';
         applyColumnVisibility();
         return;
     }
 
     if (baseProducts.length === 0 || filteredProducts.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="12" class="table-empty">当前页没有数据，请切换分页或调整筛选条件。</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="13" class="table-empty">当前页没有数据，请切换分页或调整筛选条件。</td></tr>';
         applyColumnVisibility();
         return;
     }
@@ -716,10 +717,11 @@ function renderProductRow(product) {
         '</td>' +
         '<td data-col="category"><span class="category-pill">' + escapeHtml(getProductCategory(product)) + '</span></td>' +
         '<td data-col="price">¥' + (product.price || 0).toFixed(2) + '</td>' +
-        '<td data-col="product_total_sales">' + formatNumber(product.product_total_sales) + '</td>' +
         '<td data-col="daily_product_sales" class="' + getDeltaClass(product.daily_product_sales_ready ? product.daily_product_sales : null) + '">' + renderDailyProductSales(product) + '</td>' +
-        '<td data-col="daily_product_sales_growth" class="' + getGrowthClass(product.daily_product_sales_growth) + '">' + formatDailyGrowth(product.daily_product_sales_growth, product.previous_daily_product_sales, product.daily_product_sales, product.daily_product_sales_ready) + '</td>' +
+        '<td data-col="yesterday_product_sales" class="' + getDeltaClass(product.yesterday_product_sales_ready ? product.yesterday_product_sales : null) + '">' + renderYesterdayProductSales(product) + '</td>' +
+        '<td data-col="daily_product_sales_growth" class="' + getGrowthClass(product.daily_product_sales_growth, product.daily_product_sales_growth_ready, product.previous_daily_product_sales, product.yesterday_product_sales) + '">' + formatDailyGrowth(product.daily_product_sales_growth, product.previous_daily_product_sales, product.yesterday_product_sales, product.daily_product_sales_growth_ready, product.daily_product_sales_growth_first_day) + '</td>' +
         '<td data-col="daily_gmv">¥' + formatCurrency(product.daily_gmv || 0) + '</td>' +
+        '<td data-col="product_total_sales">' + formatNumber(product.product_total_sales) + '</td>' +
         '<td data-col="shop_total_sales">' + formatNumber(product.shop_total_sales) + '</td>' +
         '<td data-col="daily_shop_sales" class="' + getDeltaClass(product.daily_shop_sales) + '">' + formatNumber(product.daily_shop_sales) + '</td>' +
         '<td data-col="created_at">' + renderTimeCell(product.created_at) + '</td>' +
@@ -1327,9 +1329,12 @@ function formatCurrency(num) {
     return Math.round(num).toLocaleString();
 }
 
-function formatDailyGrowth(growthValue, previousDailySales, currentDailySales, hasDailyBaseline = true) {
-    if (!hasDailyBaseline) {
-        return '首日';
+function formatDailyGrowth(growthValue, previousDailySales, currentDailySales, hasGrowthBaseline = true, isFirstDay = false) {
+    if (!hasGrowthBaseline) {
+        if (isFirstDay) {
+            return '首日';
+        }
+        return '--';
     }
 
     if (Number.isFinite(growthValue)) {
@@ -1339,6 +1344,10 @@ function formatDailyGrowth(growthValue, previousDailySales, currentDailySales, h
 
     if ((previousDailySales || 0) === 0 && (currentDailySales || 0) > 0) {
         return '新增';
+    }
+
+    if ((previousDailySales || 0) === 0 && (currentDailySales || 0) === 0) {
+        return '0%';
     }
 
     return '--';
@@ -1419,14 +1428,35 @@ function getDeltaClass(value) {
 
 function renderDailyProductSales(product) {
     if (!product.daily_product_sales_ready) {
-        return '<span class="metric-pending" title="首日监控暂无昨日对比基线，暂不展示精确日销量。">首日</span>';
+        if (product.daily_product_sales_first_day) {
+            return '<span class="metric-pending" title="该商品处于监控首日，暂无昨日对比基线。">首日</span>';
+        }
+        return '<span class="metric-pending" title="今日销量需要存在今日与昨日快照后才能准确计算。">--</span>';
     }
 
     return formatNumber(product.daily_product_sales);
 }
 
-function getGrowthClass(value) {
+function renderYesterdayProductSales(product) {
+    if (!product.yesterday_product_sales_ready) {
+        if (product.yesterday_product_sales_first_day) {
+            return '<span class="metric-pending" title="该商品处于监控首日，暂无前日对比基线。">首日</span>';
+        }
+        return '<span class="metric-pending" title="昨日销量需要存在昨日与前日快照后才能准确计算。">--</span>';
+    }
+
+    return formatNumber(product.yesterday_product_sales);
+}
+
+function getGrowthClass(value, hasGrowthBaseline = true, previousDailySales = 0, currentDailySales = 0) {
+    if (!hasGrowthBaseline) {
+        return 'muted';
+    }
+
     if (!Number.isFinite(value)) {
+        if ((previousDailySales || 0) === 0 && (currentDailySales || 0) > 0) {
+            return 'positive';
+        }
         return 'muted';
     }
 
@@ -1793,7 +1823,7 @@ function updateFilterFeedback() {
         activeFilters.push('商品总销量区间');
     }
     if (filterState.minDailySales !== null || filterState.maxDailySales !== null) {
-        activeFilters.push('商品日销量区间');
+        activeFilters.push('今日销量区间');
     }
 
     const count = productMeta.filteredTotal || 0;
