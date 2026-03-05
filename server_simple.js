@@ -42,6 +42,7 @@ const {
     deleteProduct,
     updateProductCategory,
     updateProductCategoryState,
+    updateProductVisibility,
     getUserByUsername,
     createUserWithInvite,
     createSession,
@@ -1147,16 +1148,27 @@ async function addProductsToLibraryForUserBatch(user, rawUrls, options = {}) {
 
 async function addProductToLibraryForUser(user, rawUrl, options = {}) {
     const processedUrl = await processXhsUrl(rawUrl, { browser: options.browser });
-    const existingProduct = await getProductByUrl(processedUrl);
+    let existingProduct = await getProductByUrl(processedUrl);
+    const adminUser = user?.role === 'admin';
 
     if (existingProduct) {
+        if (adminUser && existingProduct.visibility_scope === 'private') {
+            await updateProductVisibility(existingProduct.id, 'public', null);
+            existingProduct = await getProductById(existingProduct.id);
+        }
+
         const alreadySelected = await isProductSelectedByUser(user.id, existingProduct.id);
         if (!alreadySelected) {
             await addUserSelection(user.id, existingProduct.id);
         }
 
+        const isPublicProduct = existingProduct.visibility_scope !== 'private';
+        const message = isPublicProduct
+            ? (alreadySelected ? '该商品已在商品总库，也已在你的选品中' : '该商品已在商品总库，已加入你的选品')
+            : (alreadySelected ? '该商品已在你的选品池中' : '该商品已加入你的选品池（不会展示到商品总库）');
+
         return {
-            message: alreadySelected ? '该商品已在商品总库，也已在你的选品中' : '该商品已在商品总库，已加入你的选品',
+            message,
             product: existingProduct,
             existed: true,
             selected: true
@@ -1166,7 +1178,10 @@ async function addProductToLibraryForUser(user, rawUrl, options = {}) {
     const productData = await scrapeProductData(processedUrl, {
         browser: options.browser
     });
-    const product = await createProduct(processedUrl, productData);
+    const product = await createProduct(processedUrl, productData, {
+        visibilityScope: adminUser ? 'public' : 'private',
+        ownerUserId: adminUser ? null : user.id
+    });
     await upsertDailySnapshot(product.id, productData);
     await addUserSelection(user.id, product.id);
     enqueueAiCategorySync({
@@ -1177,7 +1192,9 @@ async function addProductToLibraryForUser(user, rawUrl, options = {}) {
     });
 
     return {
-        message: '商品已加入总库并同步到你的选品',
+        message: adminUser
+            ? '商品已加入总库并同步到你的选品'
+            : '商品已加入你的选品池（不会展示到商品总库）',
         product,
         existed: false,
         selected: true
@@ -1585,6 +1602,13 @@ app.post('/api/products/:id/select', requireAuth, async (req, res) => {
         const product = await getProductById(productId);
         if (!product) {
             return res.status(404).json({ error: '商品不存在' });
+        }
+
+        const isPrivateProduct = product.visibility_scope === 'private';
+        const isOwner = product.owner_user_id === req.currentUser.id;
+        const isAdminUser = req.currentUser.role === 'admin';
+        if (isPrivateProduct && !isOwner && !isAdminUser) {
+            return res.status(403).json({ error: '无权添加该私有商品到选品' });
         }
 
         await addUserSelection(req.currentUser.id, productId);

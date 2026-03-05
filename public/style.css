@@ -1295,10 +1295,13 @@ button {
     width: 7%;
 }
 
-.products-table .col-sales-daily,
+.products-table .col-sales-daily {
+    width: 7.4%;
+}
+
 .products-table .col-sales-growth,
 .products-table .col-shop-daily {
-    width: 6.5%;
+    width: 6.2%;
 }
 
 .products-table .col-gmv-daily,
@@ -1345,6 +1348,7 @@ button {
     display: inline-flex;
     align-items: center;
     gap: 6px;
+    white-space: nowrap;
 }
 
 .th-tip-icon {
@@ -1361,6 +1365,7 @@ button {
     justify-content: center;
     cursor: help;
     padding: 0;
+    flex-shrink: 0;
 }
 
 .th-tip-icon:hover {

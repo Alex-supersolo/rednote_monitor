@@ -581,12 +581,30 @@ function updateWorkspaceChrome() {
     document.getElementById('adminEntryButton').hidden = !isAdmin() || isAdminRoute();
     document.getElementById('workspaceEntryButton').hidden = !isAdmin() || !isAdminRoute();
     document.querySelector('.board-tabs').hidden = isAdminRoute();
+    updateAddProductHelper();
 
     const searchInput = document.getElementById('productSearch');
     if (searchInput && searchInput.value !== currentSearchTerm) {
         searchInput.value = currentSearchTerm;
     }
     updateSearchUi();
+}
+
+function updateAddProductHelper() {
+    const helper = document.getElementById('addProductHelper');
+    const addButton = document.getElementById('singleAddButton');
+    if (!helper || !addButton) {
+        return;
+    }
+
+    if (isAdmin()) {
+        helper.textContent = '管理员添加的新商品会进入商品总库，并自动加入你的个人选品。';
+        addButton.textContent = '加入商品库';
+        return;
+    }
+
+    helper.textContent = '普通用户添加的新商品只会进入你的个人选品池，不会展示到商品总库。';
+    addButton.textContent = '加入我的选品';
 }
 
 function getBaseProductsForView() {
@@ -608,8 +626,8 @@ function renderProducts() {
 
     if (productMeta.filteredTotal === 0) {
         const emptyText = activeWorkspaceView === 'selected'
-            ? '你还没有添加任何选品，先去商品总库选择感兴趣的商品。'
-            : '暂无监控样本，先把第一个商品加入商品总库。';
+            ? (isAdmin() ? '你还没有添加任何选品，先去商品总库选择感兴趣的商品。' : '你还没有添加任何选品，可在左侧粘贴商品链接加入我的选品。')
+            : (isAdmin() ? '暂无监控样本，先把第一个商品加入商品总库。' : '商品总库暂无样本，你可以先在左侧添加商品到个人选品池。');
         tbody.innerHTML = '<tr><td colspan="12" class="table-empty">' + emptyText + '</td></tr>';
         applyColumnVisibility();
         return;

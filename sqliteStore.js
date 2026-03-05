@@ -45,10 +45,13 @@ function formatLocalDate(date = new Date()) {
     return `${year}-${month}-${day}`;
 }
 
-function addDays(date, days) {
-    const next = new Date(date);
-    next.setDate(next.getDate() + days);
-    return next;
+function normalizeVisibilityScope(value) {
+    return value === 'private' ? 'private' : 'public';
+}
+
+function toPositiveInteger(value) {
+    const parsed = Number(value);
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
 function getDb() {
@@ -81,6 +84,8 @@ function initializeDatabase() {
             category_source TEXT NOT NULL DEFAULT 'rule',
             category_status TEXT NOT NULL DEFAULT 'rule_only',
             category_status_updated_at TEXT,
+            visibility_scope TEXT NOT NULL DEFAULT 'public',
+            owner_user_id INTEGER,
             price REAL NOT NULL DEFAULT 0,
             product_sales INTEGER NOT NULL DEFAULT 0,
             shop_name TEXT NOT NULL DEFAULT '未知店铺',
@@ -181,11 +186,35 @@ function ensureProductColumns(database) {
         database.exec('ALTER TABLE products ADD COLUMN category_status_updated_at TEXT');
     }
 
+    if (!columnNames.has('visibility_scope')) {
+        database.exec("ALTER TABLE products ADD COLUMN visibility_scope TEXT NOT NULL DEFAULT 'public'");
+    }
+
+    if (!columnNames.has('owner_user_id')) {
+        database.exec('ALTER TABLE products ADD COLUMN owner_user_id INTEGER');
+    }
+
     database.exec(`
         UPDATE products
         SET category_source = COALESCE(NULLIF(category_source, ''), 'rule'),
             category_status = COALESCE(NULLIF(category_status, ''), 'rule_only'),
-            category_status_updated_at = COALESCE(category_status_updated_at, updated_at, created_at)
+            category_status_updated_at = COALESCE(category_status_updated_at, updated_at, created_at),
+            visibility_scope = CASE
+                WHEN visibility_scope = 'private' THEN 'private'
+                ELSE 'public'
+            END,
+            owner_user_id = CASE
+                WHEN visibility_scope = 'private' THEN owner_user_id
+                ELSE NULL
+            END
+    `);
+
+    database.exec(`
+        CREATE INDEX IF NOT EXISTS idx_products_visibility_scope
+        ON products(visibility_scope);
+
+        CREATE INDEX IF NOT EXISTS idx_products_owner_user_id
+        ON products(owner_user_id);
     `);
 }
 
@@ -256,8 +285,8 @@ function bootstrapFromJsonIfNeeded(database) {
 
     const insertProduct = database.prepare(`
         INSERT INTO products (
-            id, url, name, image_url, category, category_source, category_status, category_status_updated_at, price, product_sales, shop_name, shop_sales, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            id, url, name, image_url, category, category_source, category_status, category_status_updated_at, visibility_scope, owner_user_id, price, product_sales, shop_name, shop_sales, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const insertSales = database.prepare(`
         INSERT INTO sales_data (
@@ -282,6 +311,8 @@ function bootstrapFromJsonIfNeeded(database) {
                 'rule',
                 'rule_only',
                 product.updated_at || createdAt,
+                'public',
+                null,
                 Number(product.price || 0),
                 Number(product.productSales || 0),
                 product.shopName || '未知店铺',
@@ -370,6 +401,8 @@ function mapProductRow(row) {
         category_source: row.category_source || 'rule',
         category_status: row.category_status || 'rule_only',
         category_status_updated_at: row.category_status_updated_at || row.updated_at || row.created_at,
+        visibility_scope: normalizeVisibilityScope(row.visibility_scope),
+        owner_user_id: toPositiveInteger(row.owner_user_id),
         price: Number(row.price || 0),
         productSales: row.product_sales || 0,
         shopName: row.shop_name || '未知店铺',
@@ -391,20 +424,6 @@ function mapUserRow(row) {
         is_active: Boolean(row.is_active),
         created_at: row.created_at
     };
-}
-
-function pickLatest(rows) {
-    if (!rows || rows.length === 0) {
-        return null;
-    }
-
-    return rows.reduce((latest, current) => {
-        if (!latest) {
-            return current;
-        }
-
-        return new Date(current.crawl_time) > new Date(latest.crawl_time) ? current : latest;
-    }, null);
 }
 
 function getInviteCodeRow(code) {
@@ -433,12 +452,14 @@ async function getProductByUrl(url) {
     return mapProductRow(row);
 }
 
-async function createProduct(url, productData) {
+async function createProduct(url, productData, options = {}) {
     const nowIso = new Date().toISOString();
+    const visibilityScope = normalizeVisibilityScope(options.visibilityScope);
+    const ownerUserId = visibilityScope === 'private' ? toPositiveInteger(options.ownerUserId) : null;
     const row = getDb().prepare(`
         INSERT INTO products (
-            url, name, image_url, category, category_source, category_status, category_status_updated_at, price, product_sales, shop_name, shop_sales, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            url, name, image_url, category, category_source, category_status, category_status_updated_at, visibility_scope, owner_user_id, price, product_sales, shop_name, shop_sales, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         RETURNING *
     `).get(
         url,
@@ -448,6 +469,8 @@ async function createProduct(url, productData) {
         String(productData.categorySource || 'rule'),
         String(productData.categoryStatus || 'rule_only'),
         nowIso,
+        visibilityScope,
+        ownerUserId,
         Number(productData.price || 0),
         Number(productData.productSales || 0),
         productData.shopName || '未知店铺',
@@ -584,6 +607,9 @@ async function listProductsWithMetrics(userId = null, options = {}) {
     const search = String(options.search || '').trim();
     const category = String(options.category || '').trim();
     const view = options.view === 'selected' ? 'selected' : 'library';
+    const visibility = ['public', 'accessible'].includes(options.visibility)
+        ? options.visibility
+        : 'all';
     const minPrice = parseOptionalNumber(options.minPrice);
     const maxPrice = parseOptionalNumber(options.maxPrice);
     const minTotalSales = parseOptionalNumber(options.minTotalSales);
@@ -592,6 +618,17 @@ async function listProductsWithMetrics(userId = null, options = {}) {
     const maxDailySales = parseOptionalNumber(options.maxDailySales);
     const whereClauses = [];
     const productParams = [];
+
+    if (visibility === 'public') {
+        whereClauses.push("visibility_scope = 'public'");
+    } else if (visibility === 'accessible') {
+        if (userId) {
+            whereClauses.push("(visibility_scope = 'public' OR (visibility_scope = 'private' AND owner_user_id = ?))");
+            productParams.push(userId);
+        } else {
+            whereClauses.push("visibility_scope = 'public'");
+        }
+    }
 
     if (search) {
         whereClauses.push('name LIKE ? ESCAPE \'\\\' COLLATE NOCASE');
@@ -649,9 +686,6 @@ async function listProductsWithMetrics(userId = null, options = {}) {
         `).all(userId).forEach(row => selectedIds.add(row.product_id));
     }
 
-    const today = formatLocalDate(new Date());
-    const yesterday = formatLocalDate(addDays(new Date(), -1));
-    const dayBeforeYesterday = formatLocalDate(addDays(new Date(), -2));
     const byProduct = new Map();
 
     for (const row of salesRows) {
@@ -662,21 +696,22 @@ async function listProductsWithMetrics(userId = null, options = {}) {
 
     const metricProducts = products.map(product => {
         const productSalesRows = byProduct.get(product.id) || [];
-        const latestToday = pickLatest(productSalesRows.filter(row => row.crawl_date === today));
-        const latestYesterday = pickLatest(productSalesRows.filter(row => row.crawl_date === yesterday));
-        const latestDayBeforeYesterday = pickLatest(productSalesRows.filter(row => row.crawl_date === dayBeforeYesterday));
-        const productTotalSales = latestToday ? latestToday.product_sales : product.productSales;
-        const shopTotalSales = latestToday ? latestToday.shop_sales : product.shopSales;
-        const hasDailyProductBaseline = Boolean(latestToday && latestYesterday);
-        const hasDailyShopBaseline = Boolean(latestToday && latestYesterday);
+        const orderedRows = [...productSalesRows].sort((a, b) => new Date(a.crawl_time) - new Date(b.crawl_time));
+        const latestSnapshot = orderedRows.length > 0 ? orderedRows[orderedRows.length - 1] : null;
+        const previousSnapshot = orderedRows.length > 1 ? orderedRows[orderedRows.length - 2] : null;
+        const prePreviousSnapshot = orderedRows.length > 2 ? orderedRows[orderedRows.length - 3] : null;
+        const productTotalSales = latestSnapshot ? latestSnapshot.product_sales : product.productSales;
+        const shopTotalSales = latestSnapshot ? latestSnapshot.shop_sales : product.shopSales;
+        const hasDailyProductBaseline = Boolean(latestSnapshot && previousSnapshot);
+        const hasDailyShopBaseline = Boolean(latestSnapshot && previousSnapshot);
         const dailyProductSales = hasDailyProductBaseline
-            ? Math.max(0, latestToday.product_sales - latestYesterday.product_sales)
+            ? Math.max(0, latestSnapshot.product_sales - previousSnapshot.product_sales)
             : 0;
-        const previousDailyProductSales = latestYesterday && latestDayBeforeYesterday
-            ? Math.max(0, latestYesterday.product_sales - latestDayBeforeYesterday.product_sales)
+        const previousDailyProductSales = previousSnapshot && prePreviousSnapshot
+            ? Math.max(0, previousSnapshot.product_sales - prePreviousSnapshot.product_sales)
             : 0;
         const dailyShopSales = hasDailyShopBaseline
-            ? Math.max(0, latestToday.shop_sales - latestYesterday.shop_sales)
+            ? Math.max(0, latestSnapshot.shop_sales - previousSnapshot.shop_sales)
             : 0;
         const dailyProductSalesGrowth = previousDailyProductSales > 0
             ? ((dailyProductSales - previousDailyProductSales) / previousDailyProductSales) * 100
@@ -693,7 +728,7 @@ async function listProductsWithMetrics(userId = null, options = {}) {
             daily_shop_sales: dailyShopSales,
             daily_shop_sales_ready: hasDailyShopBaseline,
             daily_gmv: dailyProductSales * (product.price || 0),
-            last_update: latestToday ? latestToday.crawl_time : (product.updated_at || product.created_at),
+            last_update: latestSnapshot ? latestSnapshot.crawl_time : (product.updated_at || product.created_at),
             shop_name: product.shopName || '未知店铺',
             is_selected: userId ? selectedIds.has(product.id) : false
         };
@@ -718,18 +753,37 @@ async function listProductsWithMetrics(userId = null, options = {}) {
 
 async function queryProductsWithMetrics(userId = null, options = {}) {
     const view = options.view === 'selected' ? 'selected' : 'library';
+    const visibility = ['public', 'accessible', 'all'].includes(options.visibility)
+        ? options.visibility
+        : (view === 'library' ? 'public' : 'accessible');
     const categories = normalizeCategoryList(options.categories || options.category);
     const requestedPage = Math.max(1, parseInt(options.page, 10) || 1);
     const pageSize = Math.min(200, Math.max(1, parseInt(options.pageSize, 10) || 20));
-    const libraryCount = getDb().prepare('SELECT COUNT(*) AS count FROM products').get().count;
+    const libraryCount = getDb().prepare(`
+        SELECT COUNT(*) AS count
+        FROM products
+        WHERE visibility_scope = 'public'
+    `).get().count;
     const selectedCount = userId
         ? getDb().prepare('SELECT COUNT(*) AS count FROM user_product_selections WHERE user_id = ?').get(userId).count
         : 0;
+    const categoryStatusSummaryParams = [];
+    const categoryStatusSummaryWhere = visibility === 'public'
+        ? "WHERE visibility_scope = 'public'"
+        : (visibility === 'accessible'
+            ? (userId
+                ? "WHERE visibility_scope = 'public' OR (visibility_scope = 'private' AND owner_user_id = ?)"
+                : "WHERE visibility_scope = 'public'")
+            : '');
+    if (visibility === 'accessible' && userId) {
+        categoryStatusSummaryParams.push(userId);
+    }
     const categoryStatusSummaryRows = getDb().prepare(`
         SELECT category_status, COUNT(*) AS count
         FROM products
+        ${categoryStatusSummaryWhere}
         GROUP BY category_status
-    `).all();
+    `).all(...categoryStatusSummaryParams);
     const categoryStatusSummary = {
         queued: 0,
         processing: 0,
@@ -748,6 +802,7 @@ async function queryProductsWithMetrics(userId = null, options = {}) {
     const baseProducts = await listProductsWithMetrics(userId, {
         ...options,
         view,
+        visibility,
         category: ''
     });
     const availableCategories = [...CATEGORIES];
@@ -842,6 +897,17 @@ async function updateProductCategoryState(productId, metadata = {}) {
         SET ${fields.join(', ')}
         WHERE id = ?
     `).run(...values);
+}
+
+async function updateProductVisibility(productId, visibilityScope = 'public', ownerUserId = null) {
+    const nextVisibilityScope = normalizeVisibilityScope(visibilityScope);
+    const nextOwnerUserId = nextVisibilityScope === 'private' ? toPositiveInteger(ownerUserId) : null;
+    const nowIso = new Date().toISOString();
+    getDb().prepare(`
+        UPDATE products
+        SET visibility_scope = ?, owner_user_id = ?, updated_at = ?
+        WHERE id = ?
+    `).run(nextVisibilityScope, nextOwnerUserId, nowIso, productId);
 }
 
 async function getUserById(userId) {
@@ -1206,6 +1272,7 @@ module.exports = {
     deleteProduct,
     updateProductCategory,
     updateProductCategoryState,
+    updateProductVisibility,
     getUserById,
     getUserByUsername,
     createUserWithInvite,
