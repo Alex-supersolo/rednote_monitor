@@ -421,6 +421,10 @@ function renderUserCenter(user) {
 
 function applyMembershipAccessState() {
     membershipLocked = isMembershipLocked();
+    const appShell = document.getElementById('appShell');
+    if (appShell) {
+        appShell.classList.toggle('membership-locked', membershipLocked);
+    }
     const overlay = document.getElementById('membershipOverlay');
     if (overlay) {
         overlay.hidden = !membershipLocked;
@@ -2365,6 +2369,10 @@ function getProductsCacheKey() {
 }
 
 function hydrateProductsFromCache() {
+    if (isMembershipLocked(currentUser)) {
+        return;
+    }
+
     try {
         const cached = localStorage.getItem(getProductsCacheKey());
         if (!cached) {

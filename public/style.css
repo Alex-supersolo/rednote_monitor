@@ -599,7 +599,7 @@ button {
 }
 
 .membership-overlay {
-    position: absolute;
+    position: fixed;
     inset: 0;
     z-index: calc(var(--z-modal) - 2);
     background: rgba(255, 255, 255, 0.82);
@@ -607,6 +607,10 @@ button {
     display: grid;
     place-items: center;
     padding: 18px;
+}
+
+.app-shell.membership-locked {
+    overflow: hidden;
 }
 
 .membership-card {
