@@ -368,6 +368,7 @@ button {
 }
 
 .app-shell {
+    position: relative;
     padding: 18px 0 32px;
 }
 
@@ -489,6 +490,48 @@ button {
     font-size: 0.88rem;
 }
 
+.user-center {
+    position: relative;
+}
+
+.user-center-trigger {
+    cursor: default;
+}
+
+.user-center-popover {
+    position: absolute;
+    top: calc(100% + 10px);
+    right: 0;
+    min-width: 240px;
+    padding: 12px;
+    border-radius: 12px;
+    border: 1px solid var(--line);
+    background: #ffffff;
+    box-shadow: 0 14px 32px rgba(15, 23, 42, 0.14);
+    display: none;
+    z-index: calc(var(--z-sticky) + 6);
+}
+
+.user-center:hover .user-center-popover,
+.user-center:focus-within .user-center-popover {
+    display: block;
+}
+
+.user-center-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.82rem;
+    color: var(--text-soft);
+    padding: 4px 0;
+}
+
+.user-center-row strong {
+    color: var(--text);
+    font-weight: 700;
+}
+
 .status-dot {
     width: 8px;
     height: 8px;
@@ -553,6 +596,57 @@ button {
 .sync-banner-copy span {
     color: var(--text-soft);
     font-size: 0.88rem;
+}
+
+.membership-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: calc(var(--z-modal) - 2);
+    background: rgba(255, 255, 255, 0.82);
+    backdrop-filter: blur(2px);
+    display: grid;
+    place-items: center;
+    padding: 18px;
+}
+
+.membership-card {
+    width: min(640px, 100%);
+    border-radius: 18px;
+    border: 1px solid var(--line);
+    background: #ffffff;
+    padding: 20px;
+    box-shadow: 0 18px 40px rgba(15, 23, 42, 0.12);
+    text-align: center;
+}
+
+.membership-lock {
+    margin: 0;
+    font-size: 1.4rem;
+}
+
+.membership-card h3 {
+    margin: 8px 0 6px;
+}
+
+.membership-copy {
+    margin: 0 0 14px;
+    color: var(--text-soft);
+}
+
+.membership-renew-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.membership-renew-input {
+    min-width: 0;
+}
+
+.membership-meta {
+    margin: 10px 0 0;
+    color: var(--text-muted);
+    font-size: 0.82rem;
 }
 
 .sync-banner-progress {
@@ -2008,6 +2102,18 @@ button {
     .library-tab-btn,
     .tab-btn {
         width: 100%;
+    }
+
+    .membership-renew-row {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .user-center-popover {
+        right: auto;
+        left: 0;
+        width: 100%;
+        min-width: 0;
     }
 
     .search-shell {

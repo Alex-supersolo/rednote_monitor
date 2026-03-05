@@ -18,6 +18,24 @@ const SALES_JSON_PATH = path.join(DATA_DIR, 'sales_data.json');
 let db = null;
 let initialized = false;
 
+const MEMBERSHIP_DURATION_TO_PLAN = {
+    30: 'monthly',
+    90: 'quarterly',
+    365: 'yearly'
+};
+const MEMBERSHIP_PLAN_TO_LABEL = {
+    monthly: '月卡会员',
+    quarterly: '季卡会员',
+    yearly: '年卡会员',
+    admin: '管理员'
+};
+const MEMBERSHIP_PLAN_TO_MONITOR_LIMIT = {
+    monthly: 80,
+    quarterly: 240,
+    yearly: 800,
+    admin: 5000
+};
+
 function ensureDataDir() {
     fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 }
@@ -80,6 +98,43 @@ function toPositiveInteger(value) {
     return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
+function normalizeMembershipDurationDays(value) {
+    const parsed = toPositiveInteger(value);
+    if (!parsed || !Object.prototype.hasOwnProperty.call(MEMBERSHIP_DURATION_TO_PLAN, parsed)) {
+        return 365;
+    }
+    return parsed;
+}
+
+function getMembershipPlanByDuration(durationDays) {
+    const normalizedDays = normalizeMembershipDurationDays(durationDays);
+    return MEMBERSHIP_DURATION_TO_PLAN[normalizedDays] || 'yearly';
+}
+
+function calculateMembershipExpiry(startAt, durationDays) {
+    const startDate = new Date(startAt || new Date());
+    const normalizedStart = Number.isNaN(startDate.getTime()) ? new Date() : startDate;
+    const normalizedDurationDays = normalizeMembershipDurationDays(durationDays);
+    return new Date(normalizedStart.getTime() + normalizedDurationDays * 24 * 60 * 60 * 1000).toISOString();
+}
+
+function isMembershipActive(expiresAt, role = 'member') {
+    if (String(role || '').trim() === 'admin') {
+        return true;
+    }
+
+    if (!expiresAt) {
+        return false;
+    }
+
+    const expiryDate = new Date(expiresAt);
+    if (Number.isNaN(expiryDate.getTime())) {
+        return false;
+    }
+
+    return expiryDate > new Date();
+}
+
 function getDb() {
     if (!db) {
         ensureDataDir();
@@ -138,6 +193,10 @@ function initializeDatabase() {
             password_hash TEXT NOT NULL,
             role TEXT NOT NULL DEFAULT 'member',
             is_active INTEGER NOT NULL DEFAULT 1,
+            membership_plan TEXT NOT NULL DEFAULT 'yearly',
+            membership_duration_days INTEGER NOT NULL DEFAULT 365,
+            membership_started_at TEXT,
+            membership_expires_at TEXT,
             created_at TEXT NOT NULL
         );
 
@@ -146,6 +205,7 @@ function initializeDatabase() {
             code TEXT NOT NULL UNIQUE,
             description TEXT NOT NULL DEFAULT '',
             max_uses INTEGER,
+            duration_days INTEGER NOT NULL DEFAULT 365,
             used_count INTEGER NOT NULL DEFAULT 0,
             is_active INTEGER NOT NULL DEFAULT 1,
             created_at TEXT NOT NULL
@@ -183,6 +243,7 @@ function initializeDatabase() {
 
     ensureProductColumns(database);
     ensureUserColumns(database);
+    ensureInviteCodeColumns(database);
     normalizeInviteCodeLimits(database);
     seedInviteCodes(database);
     bootstrapFromJsonIfNeeded(database);
@@ -270,6 +331,65 @@ function ensureUserColumns(database) {
     if (!columnNames.has('is_active')) {
         database.exec('ALTER TABLE users ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1');
     }
+
+    if (!columnNames.has('membership_plan')) {
+        database.exec("ALTER TABLE users ADD COLUMN membership_plan TEXT NOT NULL DEFAULT 'yearly'");
+    }
+
+    if (!columnNames.has('membership_duration_days')) {
+        database.exec('ALTER TABLE users ADD COLUMN membership_duration_days INTEGER NOT NULL DEFAULT 365');
+    }
+
+    if (!columnNames.has('membership_started_at')) {
+        database.exec('ALTER TABLE users ADD COLUMN membership_started_at TEXT');
+    }
+
+    if (!columnNames.has('membership_expires_at')) {
+        database.exec('ALTER TABLE users ADD COLUMN membership_expires_at TEXT');
+    }
+
+    database.exec(`
+        UPDATE users
+        SET
+            membership_duration_days = CASE
+                WHEN membership_duration_days IN (30, 90, 365) THEN membership_duration_days
+                ELSE 365
+            END,
+            membership_plan = CASE
+                WHEN role = 'admin' THEN 'admin'
+                WHEN membership_duration_days = 30 THEN 'monthly'
+                WHEN membership_duration_days = 90 THEN 'quarterly'
+                ELSE 'yearly'
+            END,
+            membership_started_at = COALESCE(membership_started_at, created_at),
+            membership_expires_at = COALESCE(
+                membership_expires_at,
+                CASE
+                    WHEN role = 'admin' THEN '2099-12-31T23:59:59.000Z'
+                    ELSE datetime(COALESCE(membership_started_at, created_at), '+' || CASE
+                        WHEN membership_duration_days IN (30, 90, 365) THEN membership_duration_days
+                        ELSE 365
+                    END || ' days')
+                END
+            )
+    `);
+}
+
+function ensureInviteCodeColumns(database) {
+    const columns = database.prepare('PRAGMA table_info(invite_codes)').all();
+    const columnNames = new Set(columns.map(column => column.name));
+
+    if (!columnNames.has('duration_days')) {
+        database.exec('ALTER TABLE invite_codes ADD COLUMN duration_days INTEGER NOT NULL DEFAULT 365');
+    }
+
+    database.exec(`
+        UPDATE invite_codes
+        SET duration_days = CASE
+            WHEN duration_days IN (30, 90, 365) THEN duration_days
+            ELSE 365
+        END
+    `);
 }
 
 function normalizeInviteCodeLimits(database) {
@@ -291,8 +411,8 @@ function seedInviteCodes(database) {
     }
 
     const insertInviteCode = database.prepare(`
-        INSERT INTO invite_codes (code, description, max_uses, created_at)
-        VALUES (?, ?, 1, ?)
+        INSERT INTO invite_codes (code, description, max_uses, duration_days, created_at)
+        VALUES (?, ?, 1, 365, ?)
         ON CONFLICT(code) DO NOTHING
     `);
     const nowIso = new Date().toISOString();
@@ -460,12 +580,33 @@ function mapUserRow(row) {
         return null;
     }
 
+    const role = row.role || 'member';
+    const durationDays = role === 'admin'
+        ? 365
+        : normalizeMembershipDurationDays(row.membership_duration_days);
+    const membershipPlan = role === 'admin'
+        ? 'admin'
+        : (row.membership_plan || getMembershipPlanByDuration(durationDays));
+    const membershipStartedAt = row.membership_started_at || row.created_at;
+    const membershipExpiresAt = role === 'admin'
+        ? (row.membership_expires_at || '2099-12-31T23:59:59.000Z')
+        : (row.membership_expires_at || calculateMembershipExpiry(membershipStartedAt, durationDays));
+    const membershipActive = isMembershipActive(membershipExpiresAt, role);
+    const monitorLimit = MEMBERSHIP_PLAN_TO_MONITOR_LIMIT[membershipPlan] || MEMBERSHIP_PLAN_TO_MONITOR_LIMIT.yearly;
+
     return {
         id: row.id,
         username: row.username,
-        role: row.role || 'member',
+        role,
         is_active: Boolean(row.is_active),
-        created_at: row.created_at
+        created_at: row.created_at,
+        membership_plan: membershipPlan,
+        membership_plan_label: MEMBERSHIP_PLAN_TO_LABEL[membershipPlan] || '会员',
+        membership_duration_days: durationDays,
+        membership_started_at: membershipStartedAt,
+        membership_expires_at: membershipExpiresAt,
+        membership_active: membershipActive,
+        monitor_limit: monitorLimit
     };
 }
 
@@ -1040,7 +1181,7 @@ async function updateProductVisibility(productId, visibilityScope = 'public', ow
 
 async function getUserById(userId) {
     const row = getDb().prepare(`
-        SELECT id, username, role, is_active, created_at
+        SELECT id, username, role, is_active, membership_plan, membership_duration_days, membership_started_at, membership_expires_at, created_at
         FROM users
         WHERE id = ?
     `).get(userId);
@@ -1095,18 +1236,39 @@ async function createUserWithInvite(username, passwordHash, inviteCode) {
             throw new Error('邀请码已达到使用上限');
         }
 
+        const inviteDurationDays = normalizeMembershipDurationDays(inviteRow.duration_days);
+        const invitePlan = getMembershipPlanByDuration(inviteDurationDays);
+        const membershipStartedAt = nowIso;
+        const membershipExpiresAt = calculateMembershipExpiry(membershipStartedAt, inviteDurationDays);
+
         const adminCount = database.prepare(`
             SELECT COUNT(*) AS count
             FROM users
             WHERE role = 'admin' AND is_active = 1
         `).get().count;
         const role = adminCount === 0 ? 'admin' : 'member';
+        const membershipPlan = role === 'admin' ? 'admin' : invitePlan;
+        const membershipDurationDays = role === 'admin' ? 365 : inviteDurationDays;
+        const membershipExpiresAtForInsert = role === 'admin' ? '2099-12-31T23:59:59.000Z' : membershipExpiresAt;
 
         const userRow = database.prepare(`
-            INSERT INTO users (username, password_hash, role, is_active, created_at)
-            VALUES (?, ?, ?, 1, ?)
-            RETURNING id, username, role, is_active, created_at
-        `).get(normalizedUsername, passwordHash, role, nowIso);
+            INSERT INTO users (
+                username, password_hash, role, is_active,
+                membership_plan, membership_duration_days, membership_started_at, membership_expires_at,
+                created_at
+            )
+            VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?)
+            RETURNING id, username, role, is_active, membership_plan, membership_duration_days, membership_started_at, membership_expires_at, created_at
+        `).get(
+            normalizedUsername,
+            passwordHash,
+            role,
+            membershipPlan,
+            membershipDurationDays,
+            membershipStartedAt,
+            membershipExpiresAtForInsert,
+            nowIso
+        );
 
         database.prepare(`
             UPDATE invite_codes
@@ -1142,7 +1304,18 @@ async function getUserBySessionToken(token) {
 
     const database = getDb();
     const row = database.prepare(`
-        SELECT s.token, s.expires_at, u.id, u.username, u.role, u.is_active, u.created_at
+        SELECT
+            s.token,
+            s.expires_at,
+            u.id,
+            u.username,
+            u.role,
+            u.is_active,
+            u.membership_plan,
+            u.membership_duration_days,
+            u.membership_started_at,
+            u.membership_expires_at,
+            u.created_at
         FROM sessions s
         JOIN users u ON u.id = s.user_id
         WHERE s.token = ?
@@ -1197,6 +1370,83 @@ async function isProductSelectedByUser(userId, productId) {
     return Boolean(row);
 }
 
+async function getUserSelectionCount(userId) {
+    const row = getDb().prepare(`
+        SELECT COUNT(*) AS count
+        FROM user_product_selections
+        WHERE user_id = ?
+    `).get(userId);
+    return Number(row?.count || 0);
+}
+
+async function redeemInviteCodeForUser(userId, inviteCode) {
+    const database = getDb();
+    const normalizedInviteCode = String(inviteCode || '').trim();
+    const nowIso = new Date().toISOString();
+
+    if (!normalizedInviteCode) {
+        throw new Error('请输入兑换码');
+    }
+
+    database.exec('BEGIN IMMEDIATE');
+    try {
+        const userRow = database.prepare(`
+            SELECT *
+            FROM users
+            WHERE id = ?
+        `).get(userId);
+        if (!userRow) {
+            throw new Error('用户不存在');
+        }
+
+        const inviteRow = database.prepare(`
+            SELECT *
+            FROM invite_codes
+            WHERE code = ? AND is_active = 1
+        `).get(normalizedInviteCode);
+        if (!inviteRow) {
+            throw new Error('兑换码无效或已停用');
+        }
+
+        if (inviteRow.max_uses !== null && inviteRow.used_count >= inviteRow.max_uses) {
+            throw new Error('兑换码已达到使用上限');
+        }
+
+        const durationDays = normalizeMembershipDurationDays(inviteRow.duration_days);
+        const plan = getMembershipPlanByDuration(durationDays);
+        const currentExpiry = userRow.membership_expires_at ? new Date(userRow.membership_expires_at) : null;
+        const baseDate = currentExpiry && !Number.isNaN(currentExpiry.getTime()) && currentExpiry > new Date()
+            ? currentExpiry
+            : new Date();
+        const nextExpiry = calculateMembershipExpiry(baseDate.toISOString(), durationDays);
+        const membershipStartedAt = userRow.membership_started_at || nowIso;
+
+        database.prepare(`
+            UPDATE users
+            SET membership_plan = ?, membership_duration_days = ?, membership_started_at = ?, membership_expires_at = ?
+            WHERE id = ?
+        `).run(plan, durationDays, membershipStartedAt, nextExpiry, userId);
+
+        database.prepare(`
+            UPDATE invite_codes
+            SET used_count = used_count + 1
+            WHERE id = ?
+        `).run(inviteRow.id);
+
+        const updatedUserRow = database.prepare(`
+            SELECT *
+            FROM users
+            WHERE id = ?
+        `).get(userId);
+
+        database.exec('COMMIT');
+        return mapUserRow(updatedUserRow);
+    } catch (error) {
+        database.exec('ROLLBACK');
+        throw error;
+    }
+}
+
 async function listUsersWithStats() {
     return getDb().prepare(`
         SELECT
@@ -1204,6 +1454,10 @@ async function listUsersWithStats() {
             u.username,
             u.role,
             u.is_active,
+            u.membership_plan,
+            u.membership_duration_days,
+            u.membership_started_at,
+            u.membership_expires_at,
             u.created_at,
             COUNT(ups.product_id) AS selection_count
         FROM users u
@@ -1256,11 +1510,30 @@ async function updateUserRole(targetUserId, role, actorUserId) {
             }
         }
 
-        database.prepare(`
-            UPDATE users
-            SET role = ?
-            WHERE id = ?
-        `).run(normalizedRole, targetUserId);
+        if (normalizedRole === 'admin') {
+            database.prepare(`
+                UPDATE users
+                SET role = ?, membership_plan = 'admin', membership_duration_days = 365, membership_started_at = COALESCE(membership_started_at, created_at), membership_expires_at = '2099-12-31T23:59:59.000Z'
+                WHERE id = ?
+            `).run(normalizedRole, targetUserId);
+        } else {
+            database.prepare(`
+                UPDATE users
+                SET
+                    role = ?,
+                    membership_plan = CASE WHEN membership_plan = 'admin' THEN 'yearly' ELSE membership_plan END,
+                    membership_duration_days = CASE
+                        WHEN membership_duration_days IN (30, 90, 365) THEN membership_duration_days
+                        ELSE 365
+                    END,
+                    membership_started_at = COALESCE(membership_started_at, created_at),
+                    membership_expires_at = CASE
+                        WHEN membership_expires_at IS NULL OR membership_plan = 'admin' THEN datetime(COALESCE(membership_started_at, created_at), '+365 days')
+                        ELSE membership_expires_at
+                    END
+                WHERE id = ?
+            `).run(normalizedRole, targetUserId);
+        }
 
         database.exec('COMMIT');
     } catch (error) {
@@ -1320,7 +1593,7 @@ async function updateUserActiveStatus(targetUserId, isActive, actorUserId) {
 
 async function listInviteCodes() {
     return getDb().prepare(`
-        SELECT id, code, description, max_uses, used_count, is_active, created_at
+        SELECT id, code, description, max_uses, duration_days, used_count, is_active, created_at
         FROM invite_codes
         ORDER BY created_at DESC
     `).all().map(row => ({
@@ -1328,28 +1601,33 @@ async function listInviteCodes() {
         code: row.code,
         description: row.description || '',
         max_uses: row.max_uses === null ? null : Number(row.max_uses),
+        duration_days: normalizeMembershipDurationDays(row.duration_days),
+        plan: getMembershipPlanByDuration(row.duration_days),
         used_count: Number(row.used_count || 0),
         is_active: Boolean(row.is_active),
         created_at: row.created_at
     }));
 }
 
-async function createInviteCode({ code, description, maxUses }) {
+async function createInviteCode({ code, description, maxUses, durationDays }) {
     const inviteCode = String(code || '').trim() || generateInviteCode();
     const normalizedMaxUses = maxUses === '' || maxUses === null || maxUses === undefined
         ? 1
         : Math.max(1, Number(maxUses));
+    const normalizedDurationDays = normalizeMembershipDurationDays(durationDays);
     const row = getDb().prepare(`
-        INSERT INTO invite_codes (code, description, max_uses, is_active, created_at)
-        VALUES (?, ?, ?, 1, ?)
-        RETURNING id, code, description, max_uses, used_count, is_active, created_at
-    `).get(inviteCode, String(description || '').trim(), normalizedMaxUses, new Date().toISOString());
+        INSERT INTO invite_codes (code, description, max_uses, duration_days, is_active, created_at)
+        VALUES (?, ?, ?, ?, 1, ?)
+        RETURNING id, code, description, max_uses, duration_days, used_count, is_active, created_at
+    `).get(inviteCode, String(description || '').trim(), normalizedMaxUses, normalizedDurationDays, new Date().toISOString());
 
     return {
         id: row.id,
         code: row.code,
         description: row.description || '',
         max_uses: row.max_uses === null ? null : Number(row.max_uses),
+        duration_days: normalizeMembershipDurationDays(row.duration_days),
+        plan: getMembershipPlanByDuration(row.duration_days),
         used_count: Number(row.used_count || 0),
         is_active: Boolean(row.is_active),
         created_at: row.created_at
@@ -1374,15 +1652,18 @@ async function updateInviteCode(inviteCodeId, updates = {}) {
     const nextMaxUses = updates.maxUses !== undefined
         ? (updates.maxUses === '' || updates.maxUses === null ? 1 : Math.max(1, Number(updates.maxUses)))
         : current.max_uses;
+    const nextDurationDays = updates.durationDays !== undefined
+        ? normalizeMembershipDurationDays(updates.durationDays)
+        : normalizeMembershipDurationDays(current.duration_days);
     const nextIsActive = updates.isActive !== undefined
         ? (updates.isActive ? 1 : 0)
         : current.is_active;
 
     database.prepare(`
         UPDATE invite_codes
-        SET description = ?, max_uses = ?, is_active = ?
+        SET description = ?, max_uses = ?, duration_days = ?, is_active = ?
         WHERE id = ?
-    `).run(nextDescription, nextMaxUses, nextIsActive, inviteCodeId);
+    `).run(nextDescription, nextMaxUses, nextDurationDays, nextIsActive, inviteCodeId);
 }
 
 module.exports = {
@@ -1414,6 +1695,8 @@ module.exports = {
     addUserSelection,
     removeUserSelection,
     isProductSelectedByUser,
+    getUserSelectionCount,
+    redeemInviteCodeForUser,
     listUsersWithStats,
     updateUserRole,
     updateUserActiveStatus,

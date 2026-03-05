@@ -56,6 +56,8 @@ const {
     addUserSelection,
     removeUserSelection,
     isProductSelectedByUser,
+    getUserSelectionCount,
+    redeemInviteCodeForUser,
     listUsersWithStats,
     updateUserRole,
     updateUserActiveStatus,
@@ -140,8 +142,61 @@ function getSafeUser(user) {
         username: user.username,
         role: user.role,
         is_active: user.is_active,
-        created_at: user.created_at
+        created_at: user.created_at,
+        membership_plan: user.membership_plan || (user.role === 'admin' ? 'admin' : 'yearly'),
+        membership_plan_label: user.membership_plan_label || (user.role === 'admin' ? '管理员' : '年卡会员'),
+        membership_duration_days: Number(user.membership_duration_days || 365),
+        membership_started_at: user.membership_started_at || user.created_at,
+        membership_expires_at: user.membership_expires_at || null,
+        membership_active: user.role === 'admin' ? true : Boolean(user.membership_active),
+        monitor_limit: Number(user.monitor_limit || (user.role === 'admin' ? 5000 : 800))
     };
+}
+
+function buildMembershipMeta(user) {
+    const safe = getSafeUser(user);
+    return safe
+        ? {
+            plan: safe.membership_plan,
+            planLabel: safe.membership_plan_label,
+            expiresAt: safe.membership_expires_at,
+            active: safe.membership_active,
+            monitorLimit: safe.monitor_limit
+        }
+        : null;
+}
+
+function ensureMembershipActive(user, res) {
+    if (!user || user.role === 'admin') {
+        return true;
+    }
+
+    if (user.membership_active) {
+        return true;
+    }
+
+    res.status(402).json({
+        error: '会员已过期，请输入兑换码进行续费',
+        code: 'MEMBERSHIP_EXPIRED',
+        membership: buildMembershipMeta(user)
+    });
+    return false;
+}
+
+async function assertMonitorQuotaAvailable(user) {
+    if (!user || user.role === 'admin') {
+        return;
+    }
+
+    const monitorLimit = Number(user.monitor_limit || 0);
+    if (!Number.isFinite(monitorLimit) || monitorLimit <= 0) {
+        return;
+    }
+
+    const currentSelections = await getUserSelectionCount(user.id);
+    if (currentSelections >= monitorLimit) {
+        throw new Error(`当前套餐最多同时监控 ${monitorLimit} 个商品，已达上限。请先移除部分选品或使用兑换码升级套餐。`);
+    }
 }
 
 function requireAuth(req, res, next) {
@@ -1250,6 +1305,7 @@ async function addProductToLibraryForUser(user, rawUrl, options = {}) {
     const ensureSelected = async (product) => {
         const alreadySelected = await isProductSelectedByUser(user.id, product.id);
         if (!alreadySelected) {
+            await assertMonitorQuotaAvailable(user);
             await addUserSelection(user.id, product.id);
         }
         return alreadySelected;
@@ -1319,6 +1375,7 @@ async function addProductToLibraryForUser(user, rawUrl, options = {}) {
     }
 
     // 3) Create a dedicated private product record for this user.
+    await assertMonitorQuotaAvailable(user);
     const productData = await scrapeProductData(canonicalUrl, {
         browser: options.browser
     });
@@ -1450,6 +1507,24 @@ app.post('/auth/logout', async (req, res) => {
     }
 });
 
+app.post('/api/membership/redeem', requireAuth, async (req, res) => {
+    try {
+        const code = String(req.body?.code || '').trim();
+        if (!code) {
+            return res.status(400).json({ error: '请输入兑换码' });
+        }
+
+        const renewedUser = await redeemInviteCodeForUser(req.currentUser.id, code);
+        res.json({
+            message: '续费成功，会员权益已恢复',
+            user: getSafeUser(renewedUser)
+        });
+    } catch (error) {
+        console.error('会员续费失败:', error.message);
+        res.status(400).json({ error: error.message || '续费失败' });
+    }
+});
+
 app.get('/admin/auth/me', (req, res) => {
     res.json({
         authenticated: Boolean(req.currentAdmin),
@@ -1550,7 +1625,8 @@ app.post('/admin/invite-codes', requireAdminAuth, async (req, res) => {
         const inviteCode = await createInviteCode({
             code: req.body?.code,
             description: req.body?.description,
-            maxUses: req.body?.maxUses
+            maxUses: req.body?.maxUses,
+            durationDays: req.body?.durationDays
         });
         res.status(201).json({
             message: '邀请码已创建',
@@ -1567,6 +1643,7 @@ app.patch('/admin/invite-codes/:id', requireAdminAuth, async (req, res) => {
         await updateInviteCode(Number(req.params.id), {
             description: req.body?.description,
             maxUses: req.body?.maxUses,
+            durationDays: req.body?.durationDays,
             isActive: req.body?.isActive
         });
         res.json({ message: '邀请码已更新' });
@@ -1612,6 +1689,9 @@ app.post('/api/products', requireAnyAuth, async (req, res) => {
     }
 
     try {
+        if (!ensureMembershipActive(req.actorUser, res)) {
+            return;
+        }
         console.log('收到添加商品请求:', url);
         const result = await addProductToLibraryForUser(req.actorUser, url);
         console.log('商品添加成功:', result.product);
@@ -1619,7 +1699,8 @@ app.post('/api/products', requireAnyAuth, async (req, res) => {
 
     } catch (error) {
         console.error('添加商品失败:', error);
-        res.status(500).json({ error: '添加商品失败: ' + error.message });
+        const statusCode = error.message && error.message.includes('最多同时监控') ? 400 : 500;
+        res.status(statusCode).json({ error: '添加商品失败: ' + error.message });
     }
 });
 
@@ -1635,6 +1716,9 @@ app.post('/api/products/import', requireAnyAuth, async (req, res) => {
 
     const uniqueItems = Array.from(new Set(cleanedItems));
     try {
+        if (!ensureMembershipActive(req.actorUser, res)) {
+            return;
+        }
         const activeJob = getActiveUserJob(importJobs, req.actorUser);
         if (activeJob && (activeJob.status === 'queued' || activeJob.status === 'running')) {
             return res.status(202).json({
@@ -1678,6 +1762,9 @@ app.post('/api/products/import', requireAnyAuth, async (req, res) => {
 app.get('/api/products', requireAnyAuth, async (req, res) => {
     try {
         const actor = req.actorUser;
+        if (!ensureMembershipActive(actor, res)) {
+            return;
+        }
         res.json(await queryProductsWithMetrics(actor.id, {
             view: req.query?.view,
             search: req.query?.q,
@@ -1751,6 +1838,9 @@ app.get('/api/products/:id/trend', requireAnyAuth, async (req, res) => {
     const productId = parseInt(req.params.id);
 
     try {
+        if (!ensureMembershipActive(req.actorUser, res)) {
+            return;
+        }
         const trendSource = await getTrendData(productId);
         if (!trendSource) {
             return res.status(404).json({ error: '商品不存在' });
@@ -1843,6 +1933,9 @@ app.post('/api/products/:id/select', requireAuth, async (req, res) => {
     const productId = parseInt(req.params.id);
 
     try {
+        if (!ensureMembershipActive(req.currentUser, res)) {
+            return;
+        }
         const product = await getProductById(productId);
         if (!product) {
             return res.status(404).json({ error: '商品不存在' });
@@ -1855,11 +1948,16 @@ app.post('/api/products/:id/select', requireAuth, async (req, res) => {
             return res.status(403).json({ error: '无权添加该私有商品到选品' });
         }
 
-        await addUserSelection(req.currentUser.id, productId);
+        const alreadySelected = await isProductSelectedByUser(req.currentUser.id, productId);
+        if (!alreadySelected) {
+            await assertMonitorQuotaAvailable(req.currentUser);
+            await addUserSelection(req.currentUser.id, productId);
+        }
         res.json({ message: '已加入你的选品' });
     } catch (error) {
         console.error('添加选品失败:', error.message);
-        res.status(500).json({ error: '添加选品失败' });
+        const statusCode = error.message && error.message.includes('最多同时监控') ? 400 : 500;
+        res.status(statusCode).json({ error: error.message || '添加选品失败' });
     }
 });
 
@@ -1867,6 +1965,9 @@ app.delete('/api/products/:id/select', requireAuth, async (req, res) => {
     const productId = parseInt(req.params.id);
 
     try {
+        if (!ensureMembershipActive(req.currentUser, res)) {
+            return;
+        }
         await removeUserSelection(req.currentUser.id, productId);
         res.json({ message: '已从你的选品中移除' });
     } catch (error) {

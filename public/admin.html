@@ -90,10 +90,19 @@
                     <span class="status-dot"></span>
                     <span id="heroLastSync">等待数据</span>
                 </div>
-                <div class="user-chip">
-                    <span class="user-chip-label">当前用户</span>
-                    <strong id="currentUsername">-</strong>
-                    <span id="currentUserRole" class="role-badge">member</span>
+                <div class="user-center" id="userCenter">
+                    <button class="user-chip user-center-trigger" type="button" aria-haspopup="true" aria-expanded="false">
+                        <span class="user-chip-label">当前用户</span>
+                        <strong id="currentUsername">-</strong>
+                        <span id="currentUserRole" class="role-badge">member</span>
+                    </button>
+                    <div class="user-center-popover">
+                        <div class="user-center-row"><span>用户名</span><strong id="profileUsername">-</strong></div>
+                        <div class="user-center-row"><span>注册时间</span><strong id="profileRegisteredAt">-</strong></div>
+                        <div class="user-center-row"><span>会员类型</span><strong id="profilePlan">-</strong></div>
+                        <div class="user-center-row"><span>到期时间</span><strong id="profileExpiresAt">-</strong></div>
+                        <div class="user-center-row"><span>监控上限</span><strong id="profileMonitorLimit">-</strong></div>
+                    </div>
                 </div>
                 <button id="adminEntryButton" onclick="goToAdmin()" class="btn btn-secondary" hidden>管理后台</button>
                 <button id="workspaceEntryButton" onclick="goToWorkspace()" class="btn btn-secondary" hidden>返回工作台</button>
@@ -361,6 +370,11 @@
                             <div class="admin-form-grid">
                                 <input id="newInviteCode" class="auth-input" type="text" placeholder="自定义邀请码，可留空自动生成">
                                 <input id="newInviteDescription" class="auth-input" type="text" placeholder="备注，例如：内测用户 / 合作伙伴">
+                                <select id="newInviteDurationDays" class="auth-input" aria-label="兑换码期限">
+                                    <option value="30">月卡（30天）</option>
+                                    <option value="90">季卡（90天）</option>
+                                    <option value="365" selected>年卡（365天）</option>
+                                </select>
                                 <input id="newInviteMaxUses" class="auth-input" type="number" min="1" value="1" placeholder="默认 1 次，表示 1 人 1 码">
                                 <button onclick="createInviteCodeItem()" class="btn btn-primary">创建邀请码</button>
                             </div>
@@ -370,6 +384,7 @@
                                         <tr>
                                             <th>邀请码</th>
                                             <th>备注</th>
+                                            <th>期限</th>
                                             <th>已使用/上限</th>
                                             <th>状态</th>
                                             <th>操作</th>
@@ -433,6 +448,19 @@
                     </div>
                 </div>
             </section>
+        </section>
+
+        <section id="membershipOverlay" class="membership-overlay" hidden>
+            <div class="membership-card">
+                <p class="membership-lock">LOCK</p>
+                <h3>会员已过期</h3>
+                <p class="membership-copy">当前账号会员已到期，数据已锁定。请输入兑换码续费后恢复权限。</p>
+                <div class="membership-renew-row">
+                    <input id="renewCodeInput" class="auth-input membership-renew-input" type="text" placeholder="输入兑换码">
+                    <button class="btn btn-primary" type="button" onclick="redeemMembershipCode()">立即续费</button>
+                </div>
+                <p id="membershipOverlayMeta" class="membership-meta"></p>
+            </div>
         </section>
     </div>
 

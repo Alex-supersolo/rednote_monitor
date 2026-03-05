@@ -31,6 +31,7 @@ let adminUsers = [];
 let adminInviteCodes = [];
 let adminCategoryDrafts = {};
 let portalMode = 'client';
+let membershipLocked = false;
 
 const PRODUCTS_CACHE_KEY = 'xhs-monitor-products-cache-v4';
 const COLUMN_VISIBILITY_KEY = 'xhs-monitor-column-visibility-v2';
@@ -55,10 +56,25 @@ let visibleProductColumns = getDefaultVisibleProductColumns();
 document.addEventListener('DOMContentLoaded', function() {
     portalMode = detectPortalMode();
     configurePortalAuthShell();
+    bindRenewCodeInput();
     initializeApp();
 });
 
 document.addEventListener('click', handleDocumentClick);
+
+function bindRenewCodeInput() {
+    const input = document.getElementById('renewCodeInput');
+    if (!input) {
+        return;
+    }
+
+    input.addEventListener('keydown', function(event) {
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            redeemMembershipCode();
+        }
+    });
+}
 
 async function initializeApp() {
     try {
@@ -254,6 +270,8 @@ function applyAuthenticatedState(user) {
     document.getElementById('appShell').hidden = false;
     setText('currentUsername', user.username);
     setText('currentUserRole', user.role || 'member');
+    renderUserCenter(user);
+    applyMembershipAccessState();
     renderColumnSelector();
     updateWorkspaceChrome();
 }
@@ -286,6 +304,8 @@ function clearAuthenticatedState() {
     }
     setText('currentUsername', '-');
     setText('currentUserRole', 'member');
+    renderUserCenter(null);
+    applyMembershipAccessState();
     stopRefreshJobPolling();
     stopImportJobPolling();
     clearProductsCache();
@@ -352,12 +372,112 @@ function showAuthShell() {
     document.getElementById('appShell').hidden = true;
 }
 
+function isMembershipLocked(user = currentUser) {
+    return Boolean(user && user.role !== 'admin' && user.membership_active === false);
+}
+
+function formatMembershipPlanLabel(user) {
+    if (!user) {
+        return '-';
+    }
+    if (user.role === 'admin') {
+        return '管理员';
+    }
+    if (user.membership_plan_label) {
+        return user.membership_plan_label;
+    }
+    if (user.membership_plan === 'monthly') {
+        return '月卡会员';
+    }
+    if (user.membership_plan === 'quarterly') {
+        return '季卡会员';
+    }
+    return '年卡会员';
+}
+
+function formatMembershipExpiry(user) {
+    if (!user) {
+        return '-';
+    }
+    if (user.role === 'admin') {
+        return '永久';
+    }
+    return formatAbsoluteDate(user.membership_expires_at);
+}
+
+function renderUserCenter(user) {
+    setText('profileUsername', user?.username || '-');
+    setText('profileRegisteredAt', user?.created_at ? formatAbsoluteDate(user.created_at) : '-');
+    setText('profilePlan', formatMembershipPlanLabel(user));
+    setText('profileExpiresAt', formatMembershipExpiry(user));
+    if (user?.role === 'admin') {
+        setText('profileMonitorLimit', '管理员无限制');
+    } else if (user?.monitor_limit) {
+        setText('profileMonitorLimit', `${formatNumber(user.monitor_limit)} 个`);
+    } else {
+        setText('profileMonitorLimit', '-');
+    }
+}
+
+function applyMembershipAccessState() {
+    membershipLocked = isMembershipLocked();
+    const overlay = document.getElementById('membershipOverlay');
+    if (overlay) {
+        overlay.hidden = !membershipLocked;
+    }
+
+    if (!membershipLocked || !currentUser) {
+        return;
+    }
+
+    setText(
+        'membershipOverlayMeta',
+        `当前套餐：${formatMembershipPlanLabel(currentUser)}，到期时间：${formatMembershipExpiry(currentUser)}`
+    );
+}
+
+function markMembershipExpired(membershipMeta = {}) {
+    if (!currentUser || currentUser.role === 'admin') {
+        return;
+    }
+
+    currentUser.membership_active = false;
+    if (membershipMeta.plan) {
+        currentUser.membership_plan = membershipMeta.plan;
+    }
+    if (membershipMeta.planLabel) {
+        currentUser.membership_plan_label = membershipMeta.planLabel;
+    }
+    if (membershipMeta.expiresAt) {
+        currentUser.membership_expires_at = membershipMeta.expiresAt;
+    }
+    if (membershipMeta.monitorLimit) {
+        currentUser.monitor_limit = membershipMeta.monitorLimit;
+    }
+    renderUserCenter(currentUser);
+    applyMembershipAccessState();
+}
+
 async function apiFetch(url, options) {
     const response = await fetch(url, options);
     if (response.status === 401) {
         clearAuthenticatedState();
         showAuthShell();
         throw new Error('登录状态已失效，请重新登录');
+    }
+
+    if (response.status === 402) {
+        let payload = null;
+        try {
+            payload = await response.json();
+        } catch (error) {
+            payload = null;
+        }
+
+        if (payload && payload.code === 'MEMBERSHIP_EXPIRED') {
+            markMembershipExpired(payload.membership || {});
+        }
+        throw new Error((payload && payload.error) || '会员已过期，请输入兑换码续费');
     }
 
     return response;
@@ -481,6 +601,43 @@ async function importProducts(items, successPrefix) {
     }
 }
 
+async function redeemMembershipCode() {
+    const input = document.getElementById('renewCodeInput');
+    const code = (input && input.value ? input.value : '').trim();
+    if (!code) {
+        showMessage('请输入兑换码', 'warning');
+        return;
+    }
+
+    try {
+        const response = await apiFetch('/api/membership/redeem', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ code })
+        });
+        const data = await response.json();
+        if (!response.ok) {
+            throw new Error(data.error || '续费失败');
+        }
+
+        if (data.user) {
+            currentUser = data.user;
+            setText('currentUsername', currentUser.username);
+            setText('currentUserRole', currentUser.role || 'member');
+            renderUserCenter(currentUser);
+            applyMembershipAccessState();
+        }
+
+        if (input) {
+            input.value = '';
+        }
+        showMessage(data.message || '续费成功', 'success');
+        await loadProducts();
+    } catch (error) {
+        showMessage(error.message || '续费失败', 'error');
+    }
+}
+
 async function refreshAllData() {
     if (!isAdminRoute()) {
         showMessage('刷新商品数据已迁移到管理后台，请前往 /admin 操作', 'warning');
@@ -513,6 +670,22 @@ async function refreshAllData() {
 
 async function loadProducts() {
     if (!currentUser) {
+        return;
+    }
+
+    if (membershipLocked) {
+        products = [];
+        productMeta = {
+            availableCategories: [],
+            filteredTotal: 0,
+            libraryCount: 0,
+            selectedCount: 0,
+            categoryStatusSummary: {},
+            page: 1,
+            pageSize: currentPageSize || 20,
+            totalPages: 1
+        };
+        renderWorkspace();
         return;
     }
 
@@ -828,7 +1001,8 @@ async function createInviteCodeItem() {
             body: JSON.stringify({
                 code: document.getElementById('newInviteCode').value.trim(),
                 description: document.getElementById('newInviteDescription').value.trim(),
-                maxUses: document.getElementById('newInviteMaxUses').value.trim()
+                maxUses: document.getElementById('newInviteMaxUses').value.trim(),
+                durationDays: document.getElementById('newInviteDurationDays').value
             })
         });
         const data = await response.json();
@@ -839,6 +1013,7 @@ async function createInviteCodeItem() {
 
         document.getElementById('newInviteCode').value = '';
         document.getElementById('newInviteDescription').value = '';
+        document.getElementById('newInviteDurationDays').value = '365';
         document.getElementById('newInviteMaxUses').value = '1';
         showMessage(data.message || '邀请码已创建', 'success');
         await loadAdminData();
@@ -921,21 +1096,34 @@ function renderInviteCodes() {
     }
 
     if (adminInviteCodes.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="5" class="table-empty">暂无邀请码。</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="6" class="table-empty">暂无邀请码。</td></tr>';
         return;
     }
 
     tbody.innerHTML = adminInviteCodes.map(item => {
         const usageLimit = item.max_uses || 1;
         const usage = item.used_count + '/' + usageLimit;
+        const durationLabel = formatInviteDuration(item.duration_days);
         return '<tr>' +
             '<td><code class="inline-code">' + escapeHtml(item.code) + '</code></td>' +
             '<td>' + escapeHtml(item.description || '-') + '</td>' +
+            '<td>' + escapeHtml(durationLabel) + '</td>' +
             '<td>' + usage + '</td>' +
             '<td><span class="status-pill ' + (item.is_active ? 'status-active' : 'status-paused') + '">' + (item.is_active ? '启用中' : '已停用') + '</span></td>' +
             '<td><button class="btn-small ' + (item.is_active ? 'btn-danger' : 'btn-primary-soft') + '" onclick="toggleInviteCode(' + item.id + ', ' + (!item.is_active) + ')">' + (item.is_active ? '停用' : '启用') + '</button></td>' +
         '</tr>';
     }).join('');
+}
+
+function formatInviteDuration(durationDays) {
+    const normalizedDays = Number(durationDays || 365);
+    if (normalizedDays === 30) {
+        return '月卡（30天）';
+    }
+    if (normalizedDays === 90) {
+        return '季卡（90天）';
+    }
+    return '年卡（365天）';
 }
 
 function renderUsers() {
@@ -1297,6 +1485,8 @@ async function refreshCurrentUserState() {
     currentUser = data.user;
     setText('currentUsername', currentUser.username);
     setText('currentUserRole', currentUser.role || 'member');
+    renderUserCenter(currentUser);
+    applyMembershipAccessState();
 
     if (isAdminRoute() && !isAdmin()) {
         clearAuthenticatedState();
