@@ -30,6 +30,7 @@ let activeWorkspaceView = 'library';
 let adminUsers = [];
 let adminInviteCodes = [];
 let adminCategoryDrafts = {};
+let portalMode = 'client';
 
 const PRODUCTS_CACHE_KEY = 'xhs-monitor-products-cache-v4';
 const COLUMN_VISIBILITY_KEY = 'xhs-monitor-column-visibility-v1';
@@ -51,6 +52,8 @@ const PRODUCT_COLUMN_DEFS = [
 let visibleProductColumns = getDefaultVisibleProductColumns();
 
 document.addEventListener('DOMContentLoaded', function() {
+    portalMode = detectPortalMode();
+    configurePortalAuthShell();
     initializeApp();
 });
 
@@ -58,18 +61,18 @@ document.addEventListener('click', handleDocumentClick);
 
 async function initializeApp() {
     try {
-        const response = await fetch('/auth/me');
+        const response = await fetch(getAuthApiBase() + '/me');
         const data = await response.json();
 
         if (data.authenticated && data.user) {
             applyAuthenticatedState(data.user);
             hydrateProductsFromCache();
             await loadProducts();
-            if (isAdmin()) {
+            if (isAdminRoute() && isAdmin()) {
                 await loadAdminData();
+                resumeActiveRefreshJob();
+                resumeActiveImportJob();
             }
-            resumeActiveRefreshJob();
-            resumeActiveImportJob();
             return;
         }
     } catch (error) {
@@ -84,7 +87,39 @@ function isAdmin() {
 }
 
 function isAdminRoute() {
-    return window.location.pathname === '/admin';
+    return portalMode === 'admin';
+}
+
+function detectPortalMode() {
+    const fromDataset = document.body && document.body.dataset ? document.body.dataset.portal : '';
+    if (fromDataset === 'admin' || fromDataset === 'client') {
+        return fromDataset;
+    }
+    return window.location.pathname.startsWith('/admin') ? 'admin' : 'client';
+}
+
+function getAuthApiBase() {
+    return isAdminRoute() ? '/admin/auth' : '/auth';
+}
+
+function configurePortalAuthShell() {
+    if (!isAdminRoute()) {
+        return;
+    }
+
+    const tabs = document.querySelector('.auth-tabs');
+    if (tabs) {
+        const registerTab = tabs.querySelector('button[onclick*=\"register\"]');
+        if (registerTab) {
+            registerTab.hidden = true;
+        }
+    }
+
+    const registerPanel = document.getElementById('registerPanel');
+    if (registerPanel) {
+        registerPanel.hidden = true;
+        registerPanel.classList.remove('active');
+    }
 }
 
 function switchInputTab(tabName, buttonEl) {
@@ -112,7 +147,10 @@ function switchAuthMode(mode, buttonEl) {
     document.querySelectorAll('.auth-panel').forEach(panel => {
         panel.classList.remove('active');
     });
-    document.getElementById(mode + 'Panel').classList.add('active');
+    const targetPanel = document.getElementById(mode + 'Panel');
+    if (targetPanel) {
+        targetPanel.classList.add('active');
+    }
 }
 
 async function handleLogin(event) {
@@ -122,7 +160,7 @@ async function handleLogin(event) {
     const password = document.getElementById('loginPassword').value;
 
     try {
-        const response = await fetch('/auth/login', {
+        const response = await fetch(getAuthApiBase() + '/login', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ username, password })
@@ -143,6 +181,11 @@ async function handleLogin(event) {
 async function handleRegister(event) {
     event.preventDefault();
 
+    if (isAdminRoute()) {
+        showMessage('管理后台不开放注册，请使用管理员账号登录', 'warning');
+        return;
+    }
+
     const username = document.getElementById('registerUsername').value.trim();
     const password = document.getElementById('registerPassword').value;
     const inviteCode = document.getElementById('registerInviteCode').value.trim();
@@ -161,6 +204,11 @@ async function handleRegister(event) {
 
         document.getElementById('registerPassword').value = '';
         document.getElementById('registerInviteCode').value = '';
+        if (data.portal === 'admin' || (data.user && data.user.role === 'admin')) {
+            showMessage(data.message || '管理员账号创建成功，请前往管理后台登录', 'success');
+            window.location.assign('/admin');
+            return;
+        }
         await enterWorkspace(data.user, data.message || '注册成功');
     } catch (error) {
         showMessage(error.message, 'error');
@@ -171,17 +219,17 @@ async function enterWorkspace(user, messageText) {
     applyAuthenticatedState(user);
     hydrateProductsFromCache();
     await loadProducts();
-    if (isAdmin()) {
+    if (isAdminRoute() && isAdmin()) {
         await loadAdminData();
+        resumeActiveRefreshJob();
+        resumeActiveImportJob();
     }
-    resumeActiveRefreshJob();
-    resumeActiveImportJob();
     showMessage(messageText, 'success');
 }
 
 async function logout() {
     try {
-        await fetch('/auth/logout', { method: 'POST' });
+        await fetch(getAuthApiBase() + '/logout', { method: 'POST' });
     } catch (error) {
         console.warn('退出请求失败:', error);
     }
@@ -194,10 +242,12 @@ async function logout() {
 function applyAuthenticatedState(user) {
     currentUser = user;
     if (isAdminRoute() && !isAdmin()) {
-        window.location.replace('/');
+        clearAuthenticatedState();
+        showAuthShell();
+        showMessage('仅管理员可登录管理后台', 'error');
         return;
     }
-    activeWorkspaceView = isAdminRoute() && isAdmin() ? 'admin' : 'library';
+    activeWorkspaceView = isAdminRoute() ? 'library' : 'library';
     visibleProductColumns = loadColumnVisibilityState();
     document.getElementById('authShell').hidden = true;
     document.getElementById('appShell').hidden = false;
@@ -313,6 +363,11 @@ async function apiFetch(url, options) {
 }
 
 async function addProduct() {
+    if (!isAdminRoute()) {
+        showMessage('新增商品功能仅在管理后台开放', 'warning');
+        return;
+    }
+
     const urlInput = document.getElementById('productUrl');
     const url = urlInput.value.trim();
 
@@ -345,6 +400,11 @@ async function addProduct() {
 }
 
 async function importBatchUrls() {
+    if (!isAdminRoute()) {
+        showMessage('批量导入功能仅在管理后台开放', 'warning');
+        return;
+    }
+
     const textarea = document.getElementById('batchUrls');
     const items = textarea.value.trim().split('\n').map(item => item.trim()).filter(Boolean);
 
@@ -371,6 +431,11 @@ function previewTableImport() {
 }
 
 async function importTableData() {
+    if (!isAdminRoute()) {
+        showMessage('表格导入功能仅在管理后台开放', 'warning');
+        return;
+    }
+
     const links = extractUrlsFromText(document.getElementById('tableImportText').value);
     renderTableImportPreview(links);
 
@@ -403,6 +468,11 @@ function renderTableImportPreview(links) {
 }
 
 async function importProducts(items, successPrefix) {
+    if (!isAdminRoute()) {
+        showMessage('导入功能仅在管理后台开放', 'warning');
+        return;
+    }
+
     showBatchProgress(true);
     updateProgress(8, '正在创建后台导入任务...');
 
@@ -431,8 +501,8 @@ async function importProducts(items, successPrefix) {
 }
 
 async function refreshAllData() {
-    if (isAdminRoute()) {
-        showMessage('管理后台不需要执行商品刷新，请切回商品视图操作', 'warning');
+    if (!isAdminRoute()) {
+        showMessage('刷新商品数据已迁移到管理后台，请前往 /admin 操作', 'warning');
         return;
     }
 
@@ -502,7 +572,7 @@ async function loadProducts() {
 }
 
 async function loadAdminData() {
-    if (!isAdmin()) {
+    if (!isAdminRoute() || !isAdmin()) {
         return;
     }
 
@@ -547,8 +617,9 @@ function renderWorkspace() {
     updateWorkspaceChrome();
 
     if (isAdminRoute()) {
-        document.getElementById('productsBoard').hidden = true;
+        document.getElementById('productsBoard').hidden = false;
         document.getElementById('adminBoard').hidden = false;
+        renderProducts();
         renderAdminBoard();
         return;
     }
@@ -559,6 +630,7 @@ function renderWorkspace() {
 }
 
 function updateWorkspaceChrome() {
+    const adminPortal = isAdminRoute();
     const titles = {
         library: '商品总库',
         selected: '我的选品池',
@@ -570,18 +642,26 @@ function updateWorkspaceChrome() {
         admin: '管理员可以在这里管理邀请码、用户角色和账号状态。'
     };
 
-    const viewKey = isAdminRoute() ? 'admin' : activeWorkspaceView;
+    const viewKey = adminPortal ? 'admin' : activeWorkspaceView;
     setText('workspaceTitle', titles[viewKey] || '商品总库');
     setText('toolbarNote', notes[viewKey] || notes.library);
-    document.getElementById('workspaceToolbar').hidden = isAdminRoute();
-    document.getElementById('sortControls').hidden = isAdminRoute();
-    document.getElementById('refreshAllButton').hidden = isAdminRoute();
-    document.getElementById('refreshAllButton').disabled = isAdminRoute();
-    document.getElementById('dashboardSidebar').hidden = isAdminRoute();
-    document.getElementById('adminEntryButton').hidden = !isAdmin() || isAdminRoute();
-    document.getElementById('workspaceEntryButton').hidden = !isAdmin() || !isAdminRoute();
-    document.querySelector('.board-tabs').hidden = isAdminRoute();
-    updateAddProductHelper();
+    document.getElementById('workspaceToolbar').hidden = false;
+    document.getElementById('sortControls').hidden = false;
+    document.getElementById('refreshAllButton').hidden = !adminPortal;
+    document.getElementById('refreshAllButton').disabled = !adminPortal;
+    document.getElementById('dashboardSidebar').hidden = !adminPortal;
+    document.getElementById('adminEntryButton').hidden = true;
+    document.getElementById('workspaceEntryButton').hidden = true;
+    const boardTabs = document.querySelector('.board-tabs');
+    if (boardTabs) {
+        boardTabs.hidden = adminPortal;
+    }
+    if (adminPortal) {
+        setText('workspaceTitle', '商品管理后台');
+        setText('toolbarNote', '在此统一管理商品库、导入监控对象、刷新监控数据和维护类目。');
+        activeWorkspaceView = 'library';
+        updateAddProductHelper();
+    }
 
     const searchInput = document.getElementById('productSearch');
     if (searchInput && searchInput.value !== currentSearchTerm) {
@@ -597,14 +677,8 @@ function updateAddProductHelper() {
         return;
     }
 
-    if (isAdmin()) {
-        helper.textContent = '管理员添加的新商品会进入商品总库，并自动加入你的个人选品。';
-        addButton.textContent = '加入商品库';
-        return;
-    }
-
-    helper.textContent = '普通用户添加的新商品只会进入你的个人选品池，不会展示到商品总库。';
-    addButton.textContent = '加入我的选品';
+    helper.textContent = '新增商品会进入商品总库并自动加入你的个人选品，用于后续统一监控。';
+    addButton.textContent = '加入商品库';
 }
 
 function getBaseProductsForView() {
@@ -626,8 +700,8 @@ function renderProducts() {
 
     if (productMeta.filteredTotal === 0) {
         const emptyText = activeWorkspaceView === 'selected'
-            ? (isAdmin() ? '你还没有添加任何选品，先去商品总库选择感兴趣的商品。' : '你还没有添加任何选品，可在左侧粘贴商品链接加入我的选品。')
-            : (isAdmin() ? '暂无监控样本，先把第一个商品加入商品总库。' : '商品总库暂无样本，你可以先在左侧添加商品到个人选品池。');
+            ? '你还没有添加任何选品，先去商品总库选择感兴趣的商品。'
+            : (isAdminRoute() ? '暂无监控样本，先在左侧添加商品进入商品总库。' : '商品总库暂无样本，请联系管理员先完成监控商品配置。');
         tbody.innerHTML = '<tr><td colspan="12" class="table-empty">' + emptyText + '</td></tr>';
         applyColumnVisibility();
         return;
@@ -671,6 +745,13 @@ function renderProductRow(product) {
 function renderProductActions(product) {
     const actions = [];
 
+    if (isAdminRoute()) {
+        actions.push('<button onclick="refreshProductItem(' + product.id + ')" class="btn-small table-action-btn btn-secondary">刷新</button>');
+        actions.push('<button onclick="showTrend(' + product.id + ')" class="btn-small table-action-btn btn-info">趋势</button>');
+        actions.push('<button onclick="deleteProductItem(' + product.id + ')" class="btn-small table-action-btn btn-danger">删库</button>');
+        return actions.join('');
+    }
+
     if (activeWorkspaceView === 'selected') {
         actions.push('<button onclick="toggleSelection(' + product.id + ', false)" class="btn-small table-action-btn btn-danger">移出选品</button>');
     } else if (product.is_selected) {
@@ -686,6 +767,27 @@ function renderProductActions(product) {
     }
 
     return actions.join('');
+}
+
+async function refreshProductItem(productId) {
+    if (!isAdminRoute()) {
+        showMessage('刷新功能仅在管理后台开放', 'warning');
+        return;
+    }
+
+    try {
+        const response = await apiFetch('/api/products/' + productId + '/refresh', { method: 'POST' });
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(data.error || '刷新失败');
+        }
+
+        showMessage(data.message || '商品刷新成功', 'success');
+        await loadProducts();
+    } catch (error) {
+        showMessage('刷新失败: ' + error.message, 'error');
+    }
 }
 
 async function toggleSelection(productId, shouldSelect) {
@@ -1192,7 +1294,7 @@ function updateLastSyncFromProducts() {
 }
 
 async function refreshCurrentUserState() {
-    const response = await fetch('/auth/me');
+    const response = await fetch(getAuthApiBase() + '/me');
     const data = await response.json();
     if (!data.authenticated || !data.user) {
         clearAuthenticatedState();
@@ -1204,8 +1306,10 @@ async function refreshCurrentUserState() {
     setText('currentUsername', currentUser.username);
     setText('currentUserRole', currentUser.role || 'member');
 
-    if (!isAdmin() && isAdminRoute()) {
-        window.location.replace('/');
+    if (isAdminRoute() && !isAdmin()) {
+        clearAuthenticatedState();
+        showAuthShell();
+        showMessage('仅管理员可登录管理后台', 'error');
         return;
     }
 
@@ -1395,21 +1499,13 @@ function getToolbarFilterState() {
 function buildProductsQueryParams() {
     const params = new URLSearchParams();
     const adminMode = isAdminRoute();
-    const filterState = adminMode ? {
-        categories: [],
-        minPrice: null,
-        maxPrice: null,
-        minTotalSales: null,
-        maxTotalSales: null,
-        minDailySales: null,
-        maxDailySales: null
-    } : getToolbarFilterState();
+    const filterState = getToolbarFilterState();
 
     params.set('view', adminMode ? 'library' : activeWorkspaceView);
-    params.set('page', String(adminMode ? 1 : currentPage));
-    params.set('pageSize', String(adminMode ? 200 : currentPageSize));
+    params.set('page', String(currentPage));
+    params.set('pageSize', String(currentPageSize));
 
-    if (!adminMode && currentSearchTerm.trim()) {
+    if (currentSearchTerm.trim()) {
         params.set('q', currentSearchTerm.trim());
     }
 
@@ -2026,7 +2122,7 @@ function setRefreshButtonState(isRunning) {
         return;
     }
 
-    refreshButton.disabled = isRunning || isAdminRoute();
+    refreshButton.disabled = isRunning || !isAdminRoute();
     refreshButton.textContent = isRunning ? '后台刷新中...' : '刷新全部数据';
 }
 

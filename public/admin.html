@@ -3,11 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Think Unlimited | 小红书选品监控系统</title>
+    <title>Think Unlimited | 小红书选品管理后台</title>
     <link rel="icon" type="image/png" href="/favicon-brand.png?v=20260305">
     <link rel="stylesheet" href="style.css">
 </head>
-<body data-portal="client">
+<body data-portal="admin">
     <div id="authShell" class="auth-shell">
         <section class="auth-card">
             <div class="auth-showcase">
@@ -44,15 +44,14 @@
             <div class="auth-form-panel">
                 <div class="auth-panel-brand">
                     <div>
-                        <p class="section-kicker">Member Access</p>
-                        <strong>进入你的监控工作台</strong>
-                        <span class="auth-panel-subtitle">登录后进入商品总库与个人选品池，注册需填写有效邀请码。</span>
+                        <p class="section-kicker">Admin Access</p>
+                        <strong>进入商品管理后台</strong>
+                        <span class="auth-panel-subtitle">请使用管理员账号登录。管理后台可执行商品新增、批量导入、刷新、类目编辑与用户管理。</span>
                     </div>
                 </div>
 
                 <div class="auth-tabs">
                     <button class="auth-tab-btn active" type="button" onclick="switchAuthMode('login', this)">登录</button>
-                    <button class="auth-tab-btn" type="button" onclick="switchAuthMode('register', this)">注册</button>
                 </div>
 
                 <form id="loginPanel" class="auth-panel active" onsubmit="handleLogin(event)">
@@ -60,17 +59,7 @@
                     <input id="loginUsername" class="auth-input" type="text" autocomplete="username" placeholder="输入你的用户名">
                     <label class="field-label" for="loginPassword">密码</label>
                     <input id="loginPassword" class="auth-input" type="password" autocomplete="current-password" placeholder="输入登录密码">
-                    <button class="btn btn-primary auth-submit" type="submit">登录进入工作台</button>
-                </form>
-
-                <form id="registerPanel" class="auth-panel" onsubmit="handleRegister(event)">
-                    <label class="field-label" for="registerUsername">用户名</label>
-                    <input id="registerUsername" class="auth-input" type="text" autocomplete="username" placeholder="2-24 位，支持中文/字母/数字">
-                    <label class="field-label" for="registerPassword">密码</label>
-                    <input id="registerPassword" class="auth-input" type="password" autocomplete="new-password" placeholder="至少 6 位">
-                    <label class="field-label" for="registerInviteCode">邀请码</label>
-                    <input id="registerInviteCode" class="auth-input" type="text" autocomplete="one-time-code" placeholder="输入管理员提供的邀请码">
-                    <button class="btn btn-primary auth-submit" type="submit">注册并进入工作台</button>
+                    <button class="btn btn-primary auth-submit" type="submit">登录管理后台</button>
                 </form>
             </div>
         </section>
@@ -93,7 +82,7 @@
                 </div>
                 <div class="workspace-copy">
                     <h1>超级个体研究院 · 小红书选品监控系统</h1>
-                    <p class="workspace-subtitle">商品总库 / 个人选品池</p>
+                    <p class="workspace-subtitle">商品管理后台</p>
                 </div>
             </div>
             <div class="topbar-right">

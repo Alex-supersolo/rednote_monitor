@@ -172,6 +172,17 @@ PORT=3000
 - `DELETE /api/products/:id` 删除商品
 - `GET /health` 健康检查
 
+登录体系（已拆分）：
+
+- 客户端入口：`/`，使用 `xhs_monitor_session`
+- 管理后台入口：`/admin`，使用 `xhs_admin_session`
+- 管理后台登录接口：`/admin/auth/login`、`/admin/auth/me`、`/admin/auth/logout`
+
+权限边界：
+
+- 商品新增（单个/批量/表格导入）、商品刷新（单个/全部）、商品删除、类目编辑：仅管理后台可用
+- 客户端保留商品浏览、趋势查看、个人选品管理
+
 健康检查示例：
 
 ```bash

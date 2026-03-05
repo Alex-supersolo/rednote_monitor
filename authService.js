@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 
 const SESSION_COOKIE_NAME = 'xhs_monitor_session';
+const ADMIN_SESSION_COOKIE_NAME = 'xhs_admin_session';
 const SESSION_MAX_AGE_DAYS = 30;
 const SESSION_MAX_AGE_SECONDS = SESSION_MAX_AGE_DAYS * 24 * 60 * 60;
 
@@ -48,10 +49,10 @@ function parseCookies(cookieHeader = '') {
     }, {});
 }
 
-function serializeSessionCookie(token, expiresAt) {
+function serializeSessionCookie(token, expiresAt, cookieName = SESSION_COOKIE_NAME) {
     const expires = expiresAt instanceof Date ? expiresAt : new Date(expiresAt);
     return [
-        `${SESSION_COOKIE_NAME}=${encodeURIComponent(token)}`,
+        `${cookieName}=${encodeURIComponent(token)}`,
         'Path=/',
         'HttpOnly',
         'SameSite=Lax',
@@ -60,9 +61,9 @@ function serializeSessionCookie(token, expiresAt) {
     ].join('; ');
 }
 
-function serializeClearSessionCookie() {
+function serializeClearSessionCookie(cookieName = SESSION_COOKIE_NAME) {
     return [
-        `${SESSION_COOKIE_NAME}=`,
+        `${cookieName}=`,
         'Path=/',
         'HttpOnly',
         'SameSite=Lax',
@@ -115,6 +116,7 @@ function validateLoginInput(username, password) {
 }
 
 module.exports = {
+    ADMIN_SESSION_COOKIE_NAME,
     SESSION_COOKIE_NAME,
     SESSION_MAX_AGE_SECONDS,
     buildSessionExpiryDate,

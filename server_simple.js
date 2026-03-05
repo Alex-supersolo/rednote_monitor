@@ -17,10 +17,12 @@ if (typeof process.loadEnvFile === 'function' && fs.existsSync(envPath)) {
 const { inferProductCategoryFromText } = require('./productCategory');
 const { classifyCategoriesWithDoubaoBatch, hasDoubaoConfig } = require('./doubaoCategory');
 const {
+    ADMIN_SESSION_COOKIE_NAME,
     buildSessionExpiryDate,
     createSessionToken,
     hashPassword,
     parseCookies,
+    SESSION_COOKIE_NAME,
     serializeClearSessionCookie,
     serializeSessionCookie,
     validateLoginInput,
@@ -85,9 +87,15 @@ app.use(express.static('public'));
 app.use(async (req, res, next) => {
     try {
         const cookies = parseCookies(req.headers.cookie || '');
-        const sessionToken = cookies.xhs_monitor_session;
-        req.sessionToken = sessionToken || null;
-        req.currentUser = sessionToken ? await getUserBySessionToken(sessionToken) : null;
+        const userSessionToken = cookies[SESSION_COOKIE_NAME];
+        const adminSessionToken = cookies[ADMIN_SESSION_COOKIE_NAME];
+        req.sessionToken = userSessionToken || null;
+        req.adminSessionToken = adminSessionToken || null;
+        req.currentUser = userSessionToken ? await getUserBySessionToken(userSessionToken) : null;
+        req.currentAdmin = adminSessionToken ? await getUserBySessionToken(adminSessionToken) : null;
+        if (req.currentAdmin && req.currentAdmin.role !== 'admin') {
+            req.currentAdmin = null;
+        }
         next();
     } catch (error) {
         next(error);
@@ -103,15 +111,11 @@ app.get('/brand-logo-light.png', (req, res) => {
 });
 
 app.get('/admin', (req, res) => {
-    if (!req.currentUser) {
-        return res.sendFile(path.join(__dirname, 'public', 'index.html'));
-    }
+    res.sendFile(path.join(__dirname, 'public', 'admin.html'));
+});
 
-    if (req.currentUser.role !== 'admin') {
-        return res.redirect(302, '/');
-    }
-
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+app.get('/admin/login', (req, res) => {
+    res.redirect(302, '/admin');
 });
 
 function getSafeUser(user) {
@@ -133,19 +137,33 @@ function requireAuth(req, res, next) {
         return res.status(401).json({ error: '请先登录后再继续操作' });
     }
 
+    if (req.currentUser.role === 'admin') {
+        return res.status(403).json({ error: '管理员账号请使用管理后台登录入口' });
+    }
+
     next();
 }
 
-function requireAdmin(req, res, next) {
-    if (!req.currentUser) {
+function requireAdminAuth(req, res, next) {
+    if (!req.currentAdmin) {
         return res.status(401).json({ error: '请先登录后再继续操作' });
     }
 
-    if (req.currentUser.role !== 'admin') {
-        return res.status(403).json({ error: '仅管理员可执行此操作' });
+    next();
+}
+
+function requireAnyAuth(req, res, next) {
+    if (req.currentAdmin) {
+        req.actorUser = req.currentAdmin;
+        return next();
     }
 
-    next();
+    if (req.currentUser) {
+        req.actorUser = req.currentUser;
+        return next();
+    }
+
+    return res.status(401).json({ error: '请先登录后再继续操作' });
 }
 
 function launchBrowser() {
@@ -1202,6 +1220,13 @@ async function addProductToLibraryForUser(user, rawUrl, options = {}) {
 }
 
 app.get('/auth/me', (req, res) => {
+    if (req.currentUser && req.currentUser.role === 'admin') {
+        return res.json({
+            authenticated: false,
+            user: null
+        });
+    }
+
     res.json({
         authenticated: Boolean(req.currentUser),
         user: getSafeUser(req.currentUser)
@@ -1219,12 +1244,17 @@ app.post('/auth/register', async (req, res) => {
         const user = await createUserWithInvite(username, hashPassword(password), inviteCode);
         const sessionToken = createSessionToken();
         const expiresAt = buildSessionExpiryDate();
+        const cookieName = user.role === 'admin' ? ADMIN_SESSION_COOKIE_NAME : SESSION_COOKIE_NAME;
 
         await createSession(user.id, sessionToken, expiresAt);
-        res.setHeader('Set-Cookie', serializeSessionCookie(sessionToken, expiresAt));
+        res.setHeader('Set-Cookie', [
+            serializeSessionCookie(sessionToken, expiresAt, cookieName),
+            serializeClearSessionCookie(user.role === 'admin' ? SESSION_COOKIE_NAME : ADMIN_SESSION_COOKIE_NAME)
+        ]);
         res.status(201).json({
-            message: '注册成功',
-            user: getSafeUser(user)
+            message: user.role === 'admin' ? '管理员账号创建成功，请前往管理后台登录' : '注册成功',
+            user: getSafeUser(user),
+            portal: user.role === 'admin' ? 'admin' : 'client'
         });
     } catch (error) {
         console.error('注册失败:', error.message);
@@ -1245,11 +1275,18 @@ app.post('/auth/login', async (req, res) => {
             return res.status(403).json({ error: '账号已被停用，请联系管理员' });
         }
 
+        if (user.role === 'admin') {
+            return res.status(403).json({ error: '管理员账号请使用管理后台登录入口' });
+        }
+
         const sessionToken = createSessionToken();
         const expiresAt = buildSessionExpiryDate();
 
         await createSession(user.id, sessionToken, expiresAt);
-        res.setHeader('Set-Cookie', serializeSessionCookie(sessionToken, expiresAt));
+        res.setHeader('Set-Cookie', [
+            serializeSessionCookie(sessionToken, expiresAt, SESSION_COOKIE_NAME),
+            serializeClearSessionCookie(ADMIN_SESSION_COOKIE_NAME)
+        ]);
         res.json({
             message: '登录成功',
             user: getSafeUser(user)
@@ -1266,7 +1303,10 @@ app.post('/auth/logout', async (req, res) => {
             await deleteSession(req.sessionToken);
         }
 
-        res.setHeader('Set-Cookie', serializeClearSessionCookie());
+        res.setHeader('Set-Cookie', [
+            serializeClearSessionCookie(SESSION_COOKIE_NAME),
+            serializeClearSessionCookie(ADMIN_SESSION_COOKIE_NAME)
+        ]);
         res.json({ message: '已退出登录' });
     } catch (error) {
         console.error('退出登录失败:', error.message);
@@ -1274,7 +1314,65 @@ app.post('/auth/logout', async (req, res) => {
     }
 });
 
-app.get('/admin/users', requireAdmin, async (req, res) => {
+app.get('/admin/auth/me', (req, res) => {
+    res.json({
+        authenticated: Boolean(req.currentAdmin),
+        user: getSafeUser(req.currentAdmin)
+    });
+});
+
+app.post('/admin/auth/login', async (req, res) => {
+    try {
+        const { username, password } = validateLoginInput(req.body?.username, req.body?.password);
+        const user = await getUserByUsername(username);
+
+        if (!user || !verifyPassword(password, user.password_hash)) {
+            return res.status(401).json({ error: '用户名或密码错误' });
+        }
+
+        if (!user.is_active) {
+            return res.status(403).json({ error: '账号已被停用，请联系管理员' });
+        }
+
+        if (user.role !== 'admin') {
+            return res.status(403).json({ error: '仅管理员可登录管理后台' });
+        }
+
+        const sessionToken = createSessionToken();
+        const expiresAt = buildSessionExpiryDate();
+        await createSession(user.id, sessionToken, expiresAt);
+        res.setHeader('Set-Cookie', [
+            serializeSessionCookie(sessionToken, expiresAt, ADMIN_SESSION_COOKIE_NAME),
+            serializeClearSessionCookie(SESSION_COOKIE_NAME)
+        ]);
+        res.json({
+            message: '登录成功',
+            user: getSafeUser(user)
+        });
+    } catch (error) {
+        console.error('管理后台登录失败:', error.message);
+        res.status(400).json({ error: error.message || '登录失败' });
+    }
+});
+
+app.post('/admin/auth/logout', async (req, res) => {
+    try {
+        if (req.adminSessionToken) {
+            await deleteSession(req.adminSessionToken);
+        }
+
+        res.setHeader('Set-Cookie', [
+            serializeClearSessionCookie(ADMIN_SESSION_COOKIE_NAME),
+            serializeClearSessionCookie(SESSION_COOKIE_NAME)
+        ]);
+        res.json({ message: '已退出登录' });
+    } catch (error) {
+        console.error('管理后台退出登录失败:', error.message);
+        res.status(500).json({ error: '退出登录失败' });
+    }
+});
+
+app.get('/admin/users', requireAdminAuth, async (req, res) => {
     try {
         res.json(await listUsersWithStats());
     } catch (error) {
@@ -1283,16 +1381,16 @@ app.get('/admin/users', requireAdmin, async (req, res) => {
     }
 });
 
-app.patch('/admin/users/:id', requireAdmin, async (req, res) => {
+app.patch('/admin/users/:id', requireAdminAuth, async (req, res) => {
     const targetUserId = Number(req.params.id);
 
     try {
         if (req.body.role !== undefined) {
-            await updateUserRole(targetUserId, req.body.role, req.currentUser.id);
+            await updateUserRole(targetUserId, req.body.role, req.currentAdmin.id);
         }
 
         if (req.body.isActive !== undefined) {
-            await updateUserActiveStatus(targetUserId, Boolean(req.body.isActive), req.currentUser.id);
+            await updateUserActiveStatus(targetUserId, Boolean(req.body.isActive), req.currentAdmin.id);
         }
 
         res.json({ message: '用户信息已更新' });
@@ -1302,7 +1400,7 @@ app.patch('/admin/users/:id', requireAdmin, async (req, res) => {
     }
 });
 
-app.get('/admin/invite-codes', requireAdmin, async (req, res) => {
+app.get('/admin/invite-codes', requireAdminAuth, async (req, res) => {
     try {
         res.json(await listInviteCodes());
     } catch (error) {
@@ -1311,7 +1409,7 @@ app.get('/admin/invite-codes', requireAdmin, async (req, res) => {
     }
 });
 
-app.post('/admin/invite-codes', requireAdmin, async (req, res) => {
+app.post('/admin/invite-codes', requireAdminAuth, async (req, res) => {
     try {
         const inviteCode = await createInviteCode({
             code: req.body?.code,
@@ -1328,7 +1426,7 @@ app.post('/admin/invite-codes', requireAdmin, async (req, res) => {
     }
 });
 
-app.patch('/admin/invite-codes/:id', requireAdmin, async (req, res) => {
+app.patch('/admin/invite-codes/:id', requireAdminAuth, async (req, res) => {
     try {
         await updateInviteCode(Number(req.params.id), {
             description: req.body?.description,
@@ -1342,7 +1440,7 @@ app.patch('/admin/invite-codes/:id', requireAdmin, async (req, res) => {
     }
 });
 
-app.patch('/admin/products/:id/category', requireAdmin, async (req, res) => {
+app.patch('/admin/products/:id/category', requireAdminAuth, async (req, res) => {
     const productId = Number(req.params.id);
     const category = String(req.body?.category || '').trim();
 
@@ -1369,8 +1467,8 @@ app.patch('/admin/products/:id/category', requireAdmin, async (req, res) => {
     }
 });
 
-// 添加商品
-app.post('/api/products', requireAuth, async (req, res) => {
+// 添加商品（仅管理后台）
+app.post('/api/products', requireAdminAuth, async (req, res) => {
     const { url } = req.body;
 
     if (!url) {
@@ -1379,7 +1477,7 @@ app.post('/api/products', requireAuth, async (req, res) => {
 
     try {
         console.log('收到添加商品请求:', url);
-        const result = await addProductToLibraryForUser(req.currentUser, url);
+        const result = await addProductToLibraryForUser(req.currentAdmin, url);
         console.log('商品添加成功:', result.product);
         res.json(result);
 
@@ -1389,7 +1487,7 @@ app.post('/api/products', requireAuth, async (req, res) => {
     }
 });
 
-app.post('/api/products/import', requireAuth, async (req, res) => {
+app.post('/api/products/import', requireAdminAuth, async (req, res) => {
     const items = Array.isArray(req.body?.items) ? req.body.items : [];
     const cleanedItems = items
         .map(item => String(item || '').trim())
@@ -1401,7 +1499,7 @@ app.post('/api/products/import', requireAuth, async (req, res) => {
 
     const uniqueItems = Array.from(new Set(cleanedItems));
     try {
-        const activeJob = getActiveUserJob(importJobs, req.currentUser);
+        const activeJob = getActiveUserJob(importJobs, req.currentAdmin);
         if (activeJob && (activeJob.status === 'queued' || activeJob.status === 'running')) {
             return res.status(202).json({
                 message: '已有导入任务进行中',
@@ -1409,12 +1507,12 @@ app.post('/api/products/import', requireAuth, async (req, res) => {
             });
         }
 
-        const job = createImportJob(uniqueItems.length, 'manual', req.currentUser);
+        const job = createImportJob(uniqueItems.length, 'manual', req.currentAdmin);
         markImportJobStarted(job);
 
         (async () => {
             try {
-                await addProductsToLibraryForUserBatch(req.currentUser, uniqueItems, {
+                await addProductsToLibraryForUserBatch(req.currentAdmin, uniqueItems, {
                     concurrency: 3,
                     onProgress(result, counts) {
                         job.successCount = counts.successCount;
@@ -1441,9 +1539,10 @@ app.post('/api/products/import', requireAuth, async (req, res) => {
 });
 
 // 获取所有商品数据
-app.get('/api/products', requireAuth, async (req, res) => {
+app.get('/api/products', requireAnyAuth, async (req, res) => {
     try {
-        res.json(await queryProductsWithMetrics(req.currentUser.id, {
+        const actor = req.actorUser;
+        res.json(await queryProductsWithMetrics(actor.id, {
             view: req.query?.view,
             search: req.query?.q,
             categories: req.query?.categories,
@@ -1465,8 +1564,8 @@ app.get('/api/products', requireAuth, async (req, res) => {
     }
 });
 
-// 刷新单个商品数据
-app.post('/api/products/:id/refresh', requireAuth, async (req, res) => {
+// 刷新单个商品数据（仅管理后台）
+app.post('/api/products/:id/refresh', requireAdminAuth, async (req, res) => {
     const productId = parseInt(req.params.id);
 
     const product = await getProductById(productId);
@@ -1503,7 +1602,7 @@ app.post('/api/products/:id/refresh', requireAuth, async (req, res) => {
 });
 
 // 获取商品销量趋势数据
-app.get('/api/products/:id/trend', requireAuth, async (req, res) => {
+app.get('/api/products/:id/trend', requireAnyAuth, async (req, res) => {
     const productId = parseInt(req.params.id);
 
     try {
@@ -1583,7 +1682,7 @@ app.get('/api/products/:id/trend', requireAuth, async (req, res) => {
 });
 
 // 删除商品
-app.delete('/api/products/:id', requireAdmin, async (req, res) => {
+app.delete('/api/products/:id', requireAdminAuth, async (req, res) => {
     const productId = Number(req.params.id);
 
     try {
@@ -1631,11 +1730,11 @@ app.delete('/api/products/:id/select', requireAuth, async (req, res) => {
     }
 });
 
-app.post('/api/products/refresh-all', requireAuth, async (req, res) => {
+app.post('/api/products/refresh-all', requireAdminAuth, async (req, res) => {
     try {
         const activeJob = activeRefreshJobId ? refreshJobs.get(activeRefreshJobId) : null;
         if (activeJob && (activeJob.status === 'queued' || activeJob.status === 'running')) {
-            if (!isUserJobOwner(activeJob, req.currentUser)) {
+            if (!isUserJobOwner(activeJob, req.currentAdmin)) {
                 return res.status(409).json({
                     error: '当前系统已有刷新任务在进行中，请稍后再试'
                 });
@@ -1662,7 +1761,7 @@ app.post('/api/products/refresh-all', requireAuth, async (req, res) => {
         console.log(`需要刷新的商品数量: ${productList.length}`);
         console.log(`================================`);
 
-        const job = createRefreshJob(productList.length, 'manual', req.currentUser);
+        const job = createRefreshJob(productList.length, 'manual', req.currentAdmin);
         markRefreshJobStarted(job);
 
         (async () => {
@@ -1699,8 +1798,8 @@ app.post('/api/products/refresh-all', requireAuth, async (req, res) => {
     }
 });
 
-app.get('/api/refresh-jobs/active', requireAuth, (req, res) => {
-    const activeJob = getVisibleActiveJob(refreshJobs, activeRefreshJobId, req.currentUser);
+app.get('/api/refresh-jobs/active', requireAdminAuth, (req, res) => {
+    const activeJob = getVisibleActiveJob(refreshJobs, activeRefreshJobId, req.currentAdmin);
     if (!activeJob) {
         return res.status(204).end();
     }
@@ -1708,20 +1807,20 @@ app.get('/api/refresh-jobs/active', requireAuth, (req, res) => {
     res.json(buildRefreshJobSummary(activeJob));
 });
 
-app.get('/api/refresh-jobs/:id', requireAuth, (req, res) => {
+app.get('/api/refresh-jobs/:id', requireAdminAuth, (req, res) => {
     const job = refreshJobs.get(req.params.id);
     if (!job) {
         return res.status(404).json({ error: '刷新任务不存在' });
     }
-    if (!isUserJobOwner(job, req.currentUser)) {
+    if (!isUserJobOwner(job, req.currentAdmin)) {
         return res.status(403).json({ error: '无权查看该刷新任务' });
     }
 
     res.json(buildRefreshJobSummary(job));
 });
 
-app.get('/api/import-jobs/active', requireAuth, (req, res) => {
-    const activeJob = getActiveUserJob(importJobs, req.currentUser);
+app.get('/api/import-jobs/active', requireAdminAuth, (req, res) => {
+    const activeJob = getActiveUserJob(importJobs, req.currentAdmin);
     if (!activeJob) {
         return res.status(204).end();
     }
@@ -1729,12 +1828,12 @@ app.get('/api/import-jobs/active', requireAuth, (req, res) => {
     res.json(buildImportJobSummary(activeJob));
 });
 
-app.get('/api/import-jobs/:id', requireAuth, (req, res) => {
+app.get('/api/import-jobs/:id', requireAdminAuth, (req, res) => {
     const job = importJobs.get(req.params.id);
     if (!job) {
         return res.status(404).json({ error: '导入任务不存在' });
     }
-    if (!isUserJobOwner(job, req.currentUser)) {
+    if (!isUserJobOwner(job, req.currentAdmin)) {
         return res.status(403).json({ error: '无权查看该导入任务' });
     }
 
