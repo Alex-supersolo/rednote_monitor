@@ -55,13 +55,25 @@ http://localhost:3000
 - 服务器：`47.107.177.223`
 - 项目目录：`/www/wwwroot/rednote_monitor`
 - 发布分支：`main`
-- PM2 进程名：`xiaohongshu-monitor`
 - 服务端口：`3010`
 - 对外域名：`http://xhsmonitor.supersolo.me`
 
-标准发布步骤（在服务器终端执行）：
+### 推荐方式：先推 GitHub，再服务器拉取
+
+本地执行：
 
 ```bash
+cd /Users/yalin/projects/xiaohongshu-monitor2
+git add .
+git commit -m "feat: xxx"
+git push origin main
+git rev-parse --short HEAD
+```
+
+服务器执行（建议使用实际运行服务的账号，如 `admin`）：
+
+```bash
+su - admin
 cd /www/wwwroot/rednote_monitor
 
 # 首次可能遇到 git 安全目录报错，先执行一次
@@ -79,29 +91,76 @@ pm2 restart xiaohongshu-monitor --update-env || npx pm2 restart xiaohongshu-moni
 pm2 list || npx pm2 list
 ```
 
-发布后验证：
+### 应急方式：GitHub 暂时不可达时，直连服务器同步
+
+仅用于紧急修复，后续仍需补 `git push` 保持仓库一致。
+
+本地执行（示例）：
 
 ```bash
-# 本机健康检查
+SERVER=root@47.107.177.223
+TARGET=/www/wwwroot/rednote_monitor
+
+scp server_simple.js "$SERVER:$TARGET/server_simple.js"
+scp authService.js "$SERVER:$TARGET/authService.js"
+scp public/index.html "$SERVER:$TARGET/public/index.html"
+scp public/admin.html "$SERVER:$TARGET/public/admin.html"
+scp public/script.js "$SERVER:$TARGET/public/script.js"
+scp README.md "$SERVER:$TARGET/README.md"
+
+# 修正文件所有者，避免后续 git pull 权限冲突
+ssh "$SERVER" "chown admin:admin $TARGET/server_simple.js $TARGET/authService.js $TARGET/public/index.html $TARGET/public/admin.html $TARGET/public/script.js $TARGET/README.md"
+```
+
+然后在服务器用 `admin` 账号重启：
+
+```bash
+su - admin -c "pm2 restart xiaohongshu-monitor --update-env || npx pm2 restart xiaohongshu-monitor --update-env"
+```
+
+### 发布后验收（必须执行）
+
+```bash
+# 1) 本机健康检查
 curl -s http://127.0.0.1:3010/health
 
-# 本机页面内容检查（示例：检查新前端标记）
+# 2) 客户端入口检查
+curl -s http://127.0.0.1:3010/ | grep -n 'data-portal="client"'
+
+# 3) 管理后台入口检查
+curl -s http://127.0.0.1:3010/admin | grep -n 'data-portal="admin"'
+
+# 4) 新文案/新标记检查（按实际版本替换关键字）
 curl -s http://127.0.0.1:3010/ | grep -n "addProductHelper"
 
-# 域名检查（确认反代已指向当前服务）
+# 5) 域名检查（确认反代已指向当前服务）
+curl -s http://xhsmonitor.supersolo.me/admin | grep -n 'data-portal="admin"'
 curl -s http://xhsmonitor.supersolo.me/ | grep -n "addProductHelper"
 ```
 
-常见问题：
+### 常见问题与排查
 
 - `fatal: detected dubious ownership`：
   - 执行 `git config --global --add safe.directory /www/wwwroot/rednote_monitor`
 - `pm2: command not found`：
   - 改用 `npx pm2 ...`
+- 重启后无变化，或 `/admin` 还是旧页面：
+  - 先确认 `3010` 实际由哪个进程/用户在监听：
+  - `ss -ltnp | grep ':3010'`
+  - 再看该 PID：
+  - `ps -fp <PID>`
+  - 若服务由 `admin` 用户运行，必须用 `su - admin -c "pm2 ..."` 管理进程；`root` 下的 PM2 不是同一套
+- `pm2 list` 里找不到 `xiaohongshu-monitor`：
+  - 先看当前账号下有哪些进程：
+  - `pm2 list`
+  - 再检查项目里的 `ecosystem.config.js`，确认 `name` 与重启命令一致
 - 本机已更新但域名仍旧版本：
   - 检查反向代理配置：
   - `grep -R "xhsmonitor.supersolo.me" /www/server/panel/vhost/nginx`
   - `grep -R "proxy_pass" /www/server/panel/vhost/nginx`
+- 本地 `git push` 卡住/超时：
+  - 先做网络连通性检查：`curl -I https://github.com`
+  - 若网络异常，可先走“应急直连同步”，恢复后补推 GitHub
 
 ## 环境变量
 
