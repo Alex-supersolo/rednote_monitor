@@ -27,6 +27,7 @@ let currentPage = 1;
 let currentPageSize = 20;
 let currentCategorySelections = [];
 let activeWorkspaceView = 'library';
+let activeAdminTopView = 'products';
 let adminUsers = [];
 let adminInviteCodes = [];
 let adminCategoryDrafts = {};
@@ -771,14 +772,149 @@ function switchWorkspaceView(view, buttonEl) {
     loadProducts();
 }
 
+function switchAdminTopView(view, buttonEl) {
+    if (!isAdminRoute()) {
+        return;
+    }
+
+    const supportedViews = new Set(['products', 'import', 'invite', 'users', 'categories']);
+    const nextView = supportedViews.has(view) ? view : 'products';
+    activeAdminTopView = nextView;
+
+    document.querySelectorAll('.workspace-top-nav .workspace-top-nav-btn').forEach(btn => {
+        btn.classList.remove('active');
+    });
+    if (buttonEl) {
+        buttonEl.classList.add('active');
+    } else {
+        const activeBtn = document.querySelector('.workspace-top-nav .workspace-top-nav-btn[data-admin-view="' + nextView + '"]');
+        if (activeBtn) {
+            activeBtn.classList.add('active');
+        }
+    }
+
+    applyAdminTopView();
+}
+
+function applyAdminTopView() {
+    if (!isAdminRoute()) {
+        return;
+    }
+
+    const sidebar = document.getElementById('dashboardSidebar');
+    const mainPanel = document.getElementById('workspaceMainPanel');
+    const toolbar = document.getElementById('workspaceToolbar');
+    const sortControls = document.getElementById('sortControls');
+    const productsBoard = document.getElementById('productsBoard');
+    const adminBoard = document.getElementById('adminBoard');
+    const inviteCard = document.getElementById('inviteCodesCard');
+    const usersCard = document.getElementById('usersCard');
+    const categoriesCard = document.getElementById('categoriesCard');
+    const refreshAllButton = document.getElementById('refreshAllButton');
+
+    const viewMeta = {
+        products: {
+            title: '商品总库',
+            note: '查看和管理所有公开商品，支持筛选、排序、分页与趋势分析。',
+            showSidebar: false,
+            showMainPanel: true,
+            showToolbar: true,
+            showSortControls: true,
+            showProducts: true,
+            showAdminBoard: false,
+            showRefresh: true
+        },
+        import: {
+            title: '批量导入',
+            note: '批量粘贴商品链接并发起导入任务。导入进度可在顶部状态条中查看。',
+            showSidebar: true,
+            showMainPanel: false,
+            showToolbar: false,
+            showSortControls: false,
+            showProducts: false,
+            showAdminBoard: false,
+            showRefresh: false
+        },
+        invite: {
+            title: '邀请码管理',
+            note: '创建、停用和导出邀请码；支持不同会员期限的兑换码管理。',
+            showSidebar: false,
+            showMainPanel: true,
+            showToolbar: false,
+            showSortControls: false,
+            showProducts: false,
+            showAdminBoard: true,
+            showRefresh: false
+        },
+        users: {
+            title: '用户管理',
+            note: '维护账号角色和启停状态，查看用户选品数量与注册时间。',
+            showSidebar: false,
+            showMainPanel: true,
+            showToolbar: false,
+            showSortControls: false,
+            showProducts: false,
+            showAdminBoard: true,
+            showRefresh: false
+        },
+        categories: {
+            title: '类目管理',
+            note: '按商品维度维护类目，修改后即时影响筛选与展示结果。',
+            showSidebar: false,
+            showMainPanel: true,
+            showToolbar: false,
+            showSortControls: false,
+            showProducts: false,
+            showAdminBoard: true,
+            showRefresh: false
+        }
+    };
+
+    const currentMeta = viewMeta[activeAdminTopView] || viewMeta.products;
+    setText('workspaceTitle', currentMeta.title);
+    setText('toolbarNote', currentMeta.note);
+
+    if (sidebar) {
+        sidebar.hidden = !currentMeta.showSidebar;
+    }
+    if (mainPanel) {
+        mainPanel.hidden = !currentMeta.showMainPanel;
+    }
+    if (toolbar) {
+        toolbar.hidden = !currentMeta.showToolbar;
+    }
+    if (sortControls) {
+        sortControls.hidden = !currentMeta.showSortControls;
+    }
+    if (productsBoard) {
+        productsBoard.hidden = !currentMeta.showProducts;
+    }
+    if (adminBoard) {
+        adminBoard.hidden = !currentMeta.showAdminBoard;
+    }
+    if (refreshAllButton) {
+        refreshAllButton.hidden = !currentMeta.showRefresh;
+        refreshAllButton.disabled = !currentMeta.showRefresh;
+    }
+
+    if (inviteCard) {
+        inviteCard.hidden = activeAdminTopView !== 'invite';
+    }
+    if (usersCard) {
+        usersCard.hidden = activeAdminTopView !== 'users';
+    }
+    if (categoriesCard) {
+        categoriesCard.hidden = activeAdminTopView !== 'categories';
+    }
+}
+
 function renderWorkspace() {
     updateWorkspaceChrome();
 
     if (isAdminRoute()) {
-        document.getElementById('productsBoard').hidden = false;
-        document.getElementById('adminBoard').hidden = false;
         renderProducts();
         renderAdminBoard();
+        applyAdminTopView();
         return;
     }
 
@@ -789,6 +925,7 @@ function renderWorkspace() {
 
 function updateWorkspaceChrome() {
     const adminPortal = isAdminRoute();
+    const topNav = document.getElementById('workspaceTopNav');
     const titles = {
         library: '商品总库',
         selected: '我的选品池',
@@ -805,19 +942,24 @@ function updateWorkspaceChrome() {
     setText('toolbarNote', notes[viewKey] || notes.library);
     document.getElementById('workspaceToolbar').hidden = false;
     document.getElementById('sortControls').hidden = false;
-    document.getElementById('refreshAllButton').hidden = !adminPortal;
-    document.getElementById('refreshAllButton').disabled = !adminPortal;
     document.getElementById('dashboardSidebar').hidden = false;
     document.getElementById('adminEntryButton').hidden = true;
     document.getElementById('workspaceEntryButton').hidden = true;
+    if (topNav) {
+        topNav.hidden = !adminPortal;
+    }
     const boardTabs = document.querySelector('.board-tabs');
     if (boardTabs) {
         boardTabs.hidden = adminPortal;
     }
     if (adminPortal) {
-        setText('workspaceTitle', '商品管理后台');
-        setText('toolbarNote', '在此统一管理商品库、导入监控对象、刷新监控数据和维护类目。');
+        document.getElementById('refreshAllButton').hidden = false;
+        document.getElementById('refreshAllButton').disabled = false;
         activeWorkspaceView = 'library';
+        switchAdminTopView(activeAdminTopView);
+    } else {
+        document.getElementById('refreshAllButton').hidden = true;
+        document.getElementById('refreshAllButton').disabled = true;
     }
     updateAddProductHelper();
 
@@ -1091,6 +1233,73 @@ function renderAdminBoard() {
     renderInviteCodes();
     renderUsers();
     renderAdminProductCategories();
+}
+
+function getInviteCodeStatusLabel(item) {
+    return item && item.is_active ? '启用中' : '已停用';
+}
+
+function escapeCsvCell(value) {
+    const text = String(value ?? '');
+    if (/[",\r\n]/.test(text)) {
+        return '"' + text.replace(/"/g, '""') + '"';
+    }
+    return text;
+}
+
+function getExportTimestamp() {
+    const now = new Date();
+    const pad = number => String(number).padStart(2, '0');
+    return now.getFullYear() +
+        pad(now.getMonth() + 1) +
+        pad(now.getDate()) + '-' +
+        pad(now.getHours()) +
+        pad(now.getMinutes()) +
+        pad(now.getSeconds());
+}
+
+async function exportInviteCodes() {
+    if (!isAdminRoute()) {
+        showMessage('仅管理后台支持导出邀请码', 'warning');
+        return;
+    }
+
+    if (!Array.isArray(adminInviteCodes) || adminInviteCodes.length === 0) {
+        await loadAdminData();
+    }
+
+    if (!Array.isArray(adminInviteCodes) || adminInviteCodes.length === 0) {
+        showMessage('暂无可导出的邀请码', 'warning');
+        return;
+    }
+
+    const rows = [
+        ['邀请码', '备注', '期限', '已使用', '最大使用次数', '状态', '创建时间']
+    ];
+
+    adminInviteCodes.forEach(item => {
+        rows.push([
+            item.code || '',
+            item.description || '',
+            formatInviteDuration(item.duration_days),
+            String(item.used_count || 0),
+            item.max_uses === null || item.max_uses === undefined ? '' : String(item.max_uses),
+            getInviteCodeStatusLabel(item),
+            formatAbsoluteDate(item.created_at)
+        ]);
+    });
+
+    const csvContent = '\uFEFF' + rows.map(row => row.map(escapeCsvCell).join(',')).join('\r\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const downloadUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = downloadUrl;
+    link.download = 'invite-codes-' + getExportTimestamp() + '.csv';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(downloadUrl);
+    showMessage('邀请码导出成功', 'success');
 }
 
 function renderInviteCodes() {

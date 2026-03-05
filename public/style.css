@@ -669,6 +669,43 @@ button {
     gap: 12px;
 }
 
+.workspace-top-nav {
+    margin-top: 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px;
+    border-radius: 14px;
+    background: rgba(248, 250, 252, 0.95);
+    border: 1px solid rgba(148, 163, 184, 0.24);
+    overflow-x: auto;
+}
+
+.workspace-top-nav-btn {
+    border: 1px solid rgba(148, 163, 184, 0.28);
+    background: #ffffff;
+    color: var(--text-soft);
+    border-radius: 999px;
+    min-height: 38px;
+    padding: 0 14px;
+    font-weight: 700;
+    font-size: 0.88rem;
+    cursor: pointer;
+    transition: all 160ms ease;
+    white-space: nowrap;
+}
+
+.workspace-top-nav-btn.active {
+    color: #ffffff;
+    border-color: var(--primary);
+    background: linear-gradient(120deg, var(--primary) 0%, #3b82f6 100%);
+}
+
+.workspace-top-nav-btn:hover {
+    border-color: rgba(59, 130, 246, 0.48);
+    color: var(--text);
+}
+
 .sync-banner-track,
 .progress-bar {
     flex: 1 1 auto;
@@ -2070,6 +2107,17 @@ button {
 
     .topbar-left {
         align-items: flex-start;
+    }
+
+    .workspace-top-nav {
+        padding: 8px;
+        gap: 8px;
+        white-space: nowrap;
+        overflow-x: auto;
+    }
+
+    .workspace-top-nav-btn {
+        flex: 0 0 auto;
     }
 
     .sync-banner-progress {

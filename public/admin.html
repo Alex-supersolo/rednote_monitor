@@ -128,6 +128,14 @@
             </div>
         </section>
 
+        <section id="workspaceTopNav" class="workspace-top-nav" aria-label="管理功能导航">
+            <button class="workspace-top-nav-btn active" type="button" data-admin-view="products" onclick="switchAdminTopView('products', this)">商品库</button>
+            <button class="workspace-top-nav-btn" type="button" data-admin-view="import" onclick="switchAdminTopView('import', this)">批量导入</button>
+            <button class="workspace-top-nav-btn" type="button" data-admin-view="invite" onclick="switchAdminTopView('invite', this)">邀请码</button>
+            <button class="workspace-top-nav-btn" type="button" data-admin-view="users" onclick="switchAdminTopView('users', this)">用户管理</button>
+            <button class="workspace-top-nav-btn" type="button" data-admin-view="categories" onclick="switchAdminTopView('categories', this)">类目管理</button>
+        </section>
+
         <section class="dashboard-grid">
             <aside id="dashboardSidebar" class="dashboard-sidebar">
                 <section class="panel control-panel">
@@ -159,7 +167,7 @@
                 </section>
             </aside>
 
-            <section class="panel main-panel">
+            <section id="workspaceMainPanel" class="panel main-panel">
                 <div class="panel-header">
                     <div>
                         <p class="section-kicker">Workspace</p>
@@ -351,11 +359,14 @@
 
                 <div id="adminBoard" class="admin-board" hidden>
                     <div class="admin-grid">
-                        <section class="admin-card">
+                        <section id="inviteCodesCard" class="admin-card">
                             <div class="admin-card-header">
                                 <div>
                                     <p class="section-kicker">Invite Codes</p>
                                     <h4>邀请码管理</h4>
+                                </div>
+                                <div class="admin-card-side">
+                                    <button class="btn btn-secondary" type="button" onclick="exportInviteCodes()">导出邀请码</button>
                                 </div>
                             </div>
                             <div class="admin-form-grid">
@@ -386,7 +397,7 @@
                             </div>
                         </section>
 
-                        <section class="admin-card">
+                        <section id="usersCard" class="admin-card">
                             <div class="admin-card-header">
                                 <div>
                                     <p class="section-kicker">Users</p>
@@ -410,7 +421,7 @@
                             </div>
                         </section>
 
-                        <section class="admin-card admin-card-wide">
+                        <section id="categoriesCard" class="admin-card admin-card-wide">
                             <div class="admin-card-header">
                                 <div>
                                     <p class="section-kicker">Product Categories</p>
