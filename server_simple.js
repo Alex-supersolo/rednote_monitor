@@ -15,7 +15,7 @@ if (typeof process.loadEnvFile === 'function' && fs.existsSync(envPath)) {
 }
 
 const { inferProductCategoryFromText } = require('./productCategory');
-const { classifyCategoriesWithDoubaoBatch, hasDoubaoConfig } = require('./doubaoCategory');
+const { classifyCategoriesWithDoubaoBatch, hasDoubaoConfig, getAiProviderName } = require('./doubaoCategory');
 const {
     ADMIN_SESSION_COOKIE_NAME,
     buildSessionExpiryDate,
@@ -68,7 +68,16 @@ const importJobs = new Map();
 const aiCategoryQueue = new Map();
 let activeRefreshJobId = null;
 let aiCategoryWorkerRunning = false;
-const AI_CATEGORY_BATCH_SIZE = Math.max(1, Math.min(20, Number(process.env.DOUBAO_CATEGORY_BATCH_SIZE || 10)));
+const AI_CATEGORY_BATCH_SIZE = Math.max(
+    1,
+    Math.min(
+        20,
+        Number(process.env.AI_CATEGORY_BATCH_SIZE || process.env.QIANFAN_CATEGORY_BATCH_SIZE || process.env.DOUBAO_CATEGORY_BATCH_SIZE || 10)
+    )
+);
+const AI_BOOT_SYNC_ENABLED = String(process.env.AI_BOOT_SYNC_ENABLED || 'true').toLowerCase() !== 'false';
+const AI_FAILED_RETRY_COOLDOWN_HOURS = Math.max(0, Number(process.env.AI_FAILED_RETRY_COOLDOWN_HOURS || 24));
+const AI_FAILED_RETRY_COOLDOWN_MS = AI_FAILED_RETRY_COOLDOWN_HOURS * 60 * 60 * 1000;
 const DEFAULT_BROWSER_CANDIDATES = [
     process.env.PUPPETEER_EXECUTABLE_PATH,
     process.env.CHROME_PATH,
@@ -554,9 +563,63 @@ function resolveInitialProductCategory(productTitle, shopName) {
     return inferProductCategoryFromText(productTitle, shopName);
 }
 
-function enqueueAiCategorySync(product, options = {}) {
+function hasResolvedCategory(category) {
+    const normalized = String(category || '').trim();
+    return Boolean(normalized && normalized !== '其他');
+}
+
+function parseTimestampToMs(value) {
+    const timestamp = Date.parse(String(value || ''));
+    return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+function isFailedCategoryRetryCoolingDown(product) {
+    if (AI_FAILED_RETRY_COOLDOWN_MS <= 0 || product?.category_status !== 'failed') {
+        return false;
+    }
+
+    const lastStatusMs =
+        parseTimestampToMs(product.category_status_updated_at) ??
+        parseTimestampToMs(product.updated_at) ??
+        parseTimestampToMs(product.created_at);
+    if (lastStatusMs === null) {
+        return false;
+    }
+
+    return Date.now() - lastStatusMs < AI_FAILED_RETRY_COOLDOWN_MS;
+}
+
+function shouldEnqueueAiCategory(product, options = {}) {
     if (!hasDoubaoConfig() || !product?.id || !product?.name) {
-        return;
+        return false;
+    }
+
+    if (product.category_source === 'manual') {
+        return false;
+    }
+
+    if (options.force) {
+        return true;
+    }
+
+    if (product.category_source === 'ai' && product.category_status === 'completed' && hasResolvedCategory(product.category)) {
+        return false;
+    }
+
+    if (product.category_status === 'queued' || product.category_status === 'processing') {
+        return false;
+    }
+
+    if (isFailedCategoryRetryCoolingDown(product)) {
+        return false;
+    }
+
+    return true;
+}
+
+function enqueueAiCategorySync(product, options = {}) {
+    if (!shouldEnqueueAiCategory(product, options)) {
+        return false;
     }
 
     updateProductCategoryState(product.id, {
@@ -576,6 +639,7 @@ function enqueueAiCategorySync(product, options = {}) {
     processAiCategoryQueue().catch(error => {
         console.error('AI 类目队列执行失败:', error.message);
     });
+    return true;
 }
 
 async function processAiCategoryQueue() {
@@ -662,15 +726,19 @@ async function syncExistingCategoriesWithAi() {
 
     try {
         const products = await listProductsWithMetrics();
+        let queuedCount = 0;
         for (const product of products) {
             if (product.category_source === 'manual') {
                 continue;
             }
-            enqueueAiCategorySync(product, { force: product.category === '其他' });
+            const queued = enqueueAiCategorySync(product, { force: product.category === '其他' });
+            if (queued) {
+                queuedCount += 1;
+            }
         }
-        console.log(`豆包类目补分类任务已入队，共 ${products.length} 个商品`);
+        console.log(`${getAiProviderName()} 类目补分类任务已入队 ${queuedCount} 个（总商品 ${products.length} 个）`);
     } catch (error) {
-        console.error('豆包类目同步失败:', error.message);
+        console.error(`${getAiProviderName()} 类目同步失败:`, error.message);
     }
 }
 
@@ -1037,6 +1105,10 @@ async function refreshProductsBatch(productsToRefresh, options = {}) {
                         productData.category = product.category;
                         productData.categorySource = 'manual';
                         productData.categoryStatus = 'manual';
+                    } else if (product.category_source === 'ai' && product.category_status === 'completed' && hasResolvedCategory(product.category)) {
+                        productData.category = product.category;
+                        productData.categorySource = 'ai';
+                        productData.categoryStatus = 'completed';
                     }
                     await updateProductSnapshot(product.id, productData, now);
                     await upsertDailySnapshot(product.id, productData, now);
@@ -1045,7 +1117,11 @@ async function refreshProductsBatch(productsToRefresh, options = {}) {
                             id: product.id,
                             name: productData.name,
                             shopName: productData.shopName,
-                            category: productData.category
+                            category: productData.category,
+                            category_source: productData.categorySource,
+                            category_status: productData.categoryStatus,
+                            category_status_updated_at: product.category_status_updated_at,
+                            updated_at: now.toISOString()
                         });
                     }
 
@@ -1580,16 +1656,25 @@ app.post('/api/products/:id/refresh', requireAdminAuth, async (req, res) => {
             productData.category = product.category;
             productData.categorySource = 'manual';
             productData.categoryStatus = 'manual';
+        } else if (product.category_source === 'ai' && product.category_status === 'completed' && hasResolvedCategory(product.category)) {
+            productData.category = product.category;
+            productData.categorySource = 'ai';
+            productData.categoryStatus = 'completed';
         }
 
-        await updateProductSnapshot(productId, productData);
-        await upsertDailySnapshot(productId, productData);
+        const now = new Date();
+        await updateProductSnapshot(productId, productData, now);
+        await upsertDailySnapshot(productId, productData, now);
         if (product.category_source !== 'manual') {
             enqueueAiCategorySync({
                 id: productId,
                 name: productData.name,
                 shopName: productData.shopName,
-                category: productData.category
+                category: productData.category,
+                category_source: productData.categorySource,
+                category_status: productData.categoryStatus,
+                category_status_updated_at: product.category_status_updated_at,
+                updated_at: now.toISOString()
             });
         }
 
@@ -1926,7 +2011,7 @@ async function startServer() {
         console.log(`当前商品数量: ${products.length}`);
         console.log(`数据存储: ${STORAGE_DRIVER}`);
         console.log(`数据库文件: ${DB_PATH}`);
-        console.log(`AI类目分类: ${hasDoubaoConfig() ? 'Doubao 已启用（后台补分类）' : '未启用，使用本地规则'}`);
+        console.log(`AI类目分类: ${hasDoubaoConfig() ? `${getAiProviderName()} 已启用（后台补分类）` : '未启用，使用本地规则'}`);
         console.log(`================================`);
         console.log('⏰ 自动刷新功能已启用');
         console.log('📅 刷新频率: 每小时一次');
@@ -1939,9 +2024,13 @@ async function startServer() {
             await autoRefreshAllProducts();
         }, 5 * 60 * 1000); // 5分钟后执行
 
-        setTimeout(async () => {
-            await syncExistingCategoriesWithAi();
-        }, 2000);
+        if (AI_BOOT_SYNC_ENABLED) {
+            setTimeout(async () => {
+                await syncExistingCategoriesWithAi();
+            }, 2000);
+        } else {
+            console.log('🤖 AI 启动补分类已关闭（AI_BOOT_SYNC_ENABLED=false）');
+        }
     });
 
     return server;

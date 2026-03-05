@@ -1,18 +1,39 @@
 const { CATEGORIES, normalizeCategory } = require('./productCategory');
 
-const DEFAULT_BASE_URL = 'https://ark.cn-beijing.volces.com/api/v3/chat/completions';
+const DEFAULT_QIANFAN_CHAT_URL = 'https://qianfan.baidubce.com/v2/chat/completions';
 
 function getDoubaoConfig() {
+    const qianfanApiKey = process.env.QIANFAN_API_KEY || '';
+    const qianfanModelId = process.env.QIANFAN_MODEL_ID || '';
+    const qianfanBaseUrl = process.env.QIANFAN_BASE_URL || DEFAULT_QIANFAN_CHAT_URL;
+
+    // Backward compatibility: if Qianfan env is missing, keep supporting old Doubao env.
+    const doubaoApiKey = process.env.DOUBAO_API_KEY || '';
+    const doubaoModelId = process.env.DOUBAO_MODEL_ID || '';
+    const doubaoBaseUrl = process.env.DOUBAO_BASE_URL || '';
+
+    const useQianfan = Boolean(qianfanApiKey || qianfanModelId || process.env.QIANFAN_BASE_URL);
+
     return {
-        apiKey: process.env.DOUBAO_API_KEY || '',
-        modelId: process.env.DOUBAO_MODEL_ID || '',
-        baseUrl: process.env.DOUBAO_BASE_URL || DEFAULT_BASE_URL
+        provider: useQianfan ? 'qianfan' : 'doubao',
+        apiKey: useQianfan ? qianfanApiKey : doubaoApiKey,
+        modelId: useQianfan
+            ? (qianfanModelId || 'ERNIE-Lite-Pro-128K')
+            : doubaoModelId,
+        baseUrl: useQianfan
+            ? qianfanBaseUrl
+            : (doubaoBaseUrl || 'https://ark.cn-beijing.volces.com/api/v3/chat/completions')
     };
 }
 
 function hasDoubaoConfig() {
     const config = getDoubaoConfig();
     return Boolean(config.apiKey && config.modelId);
+}
+
+function getAiProviderName() {
+    const config = getDoubaoConfig();
+    return config.provider === 'qianfan' ? 'Qianfan' : 'Doubao';
 }
 
 function extractCategoryFromText(text) {
@@ -82,7 +103,7 @@ async function classifyCategoryWithDoubao(title) {
 
     if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(`豆包分类失败: HTTP ${response.status} ${errorText}`);
+        throw new Error(`AI分类失败(${getAiProviderName()}): HTTP ${response.status} ${errorText}`);
     }
 
     const data = await response.json();
@@ -159,7 +180,7 @@ async function classifyCategoriesWithDoubaoBatch(items) {
 
     if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(`豆包批量分类失败: HTTP ${response.status} ${errorText}`);
+        throw new Error(`AI批量分类失败(${getAiProviderName()}): HTTP ${response.status} ${errorText}`);
     }
 
     const data = await response.json();
@@ -181,6 +202,7 @@ async function classifyCategoriesWithDoubaoBatch(items) {
 
 module.exports = {
     hasDoubaoConfig,
+    getAiProviderName,
     classifyCategoryWithDoubao,
     classifyCategoriesWithDoubaoBatch
 };

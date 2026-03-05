@@ -170,14 +170,24 @@ curl -s http://xhsmonitor.supersolo.me/ | grep -n "addProductHelper"
 STORAGE_DRIVER=sqlite
 SQLITE_PATH=./data/monitor.db
 PUPPETEER_EXECUTABLE_PATH=/Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+QIANFAN_API_KEY=your-qianfan-api-key
+QIANFAN_MODEL_ID=ERNIE-Lite-Pro-128K
+QIANFAN_BASE_URL=https://qianfan.baidubce.com/v2/chat/completions
+AI_CATEGORY_BATCH_SIZE=10
 PORT=3000
+AI_BOOT_SYNC_ENABLED=true
+AI_FAILED_RETRY_COOLDOWN_HOURS=24
 ```
 
 说明：
 - `STORAGE_DRIVER` 当前只实现了 `sqlite`
 - `SQLITE_PATH` 不填时默认使用 `./data/monitor.db`
 - `PUPPETEER_EXECUTABLE_PATH` 用于指定本机 Chrome 路径
+- `QIANFAN_API_KEY` / `QIANFAN_MODEL_ID` / `QIANFAN_BASE_URL` 用于千帆类目分类
+- `AI_CATEGORY_BATCH_SIZE` 控制每批类目分类数量（默认 10）
 - `PORT` 默认为 `3000`
+- `AI_BOOT_SYNC_ENABLED=false` 可关闭“服务启动后对存量商品补分类”
+- `AI_FAILED_RETRY_COOLDOWN_HOURS` 控制 AI 分类失败后的重试冷却时间（默认 24 小时）
 
 ## 数据存储
 
