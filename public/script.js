@@ -219,10 +219,10 @@ async function enterWorkspace(user, messageText) {
     applyAuthenticatedState(user);
     hydrateProductsFromCache();
     await loadProducts();
+    await resumeActiveImportJob();
     if (isAdminRoute() && isAdmin()) {
         await loadAdminData();
         resumeActiveRefreshJob();
-        resumeActiveImportJob();
     }
     showMessage(messageText, 'success');
 }
@@ -363,11 +363,6 @@ async function apiFetch(url, options) {
 }
 
 async function addProduct() {
-    if (!isAdminRoute()) {
-        showMessage('新增商品功能仅在管理后台开放', 'warning');
-        return;
-    }
-
     const urlInput = document.getElementById('productUrl');
     const url = urlInput.value.trim();
 
@@ -400,11 +395,6 @@ async function addProduct() {
 }
 
 async function importBatchUrls() {
-    if (!isAdminRoute()) {
-        showMessage('批量导入功能仅在管理后台开放', 'warning');
-        return;
-    }
-
     const textarea = document.getElementById('batchUrls');
     const items = textarea.value.trim().split('\n').map(item => item.trim()).filter(Boolean);
 
@@ -431,11 +421,6 @@ function previewTableImport() {
 }
 
 async function importTableData() {
-    if (!isAdminRoute()) {
-        showMessage('表格导入功能仅在管理后台开放', 'warning');
-        return;
-    }
-
     const links = extractUrlsFromText(document.getElementById('tableImportText').value);
     renderTableImportPreview(links);
 
@@ -468,11 +453,6 @@ function renderTableImportPreview(links) {
 }
 
 async function importProducts(items, successPrefix) {
-    if (!isAdminRoute()) {
-        showMessage('导入功能仅在管理后台开放', 'warning');
-        return;
-    }
-
     showBatchProgress(true);
     updateProgress(8, '正在创建后台导入任务...');
 
@@ -649,7 +629,7 @@ function updateWorkspaceChrome() {
     document.getElementById('sortControls').hidden = false;
     document.getElementById('refreshAllButton').hidden = !adminPortal;
     document.getElementById('refreshAllButton').disabled = !adminPortal;
-    document.getElementById('dashboardSidebar').hidden = !adminPortal;
+    document.getElementById('dashboardSidebar').hidden = false;
     document.getElementById('adminEntryButton').hidden = true;
     document.getElementById('workspaceEntryButton').hidden = true;
     const boardTabs = document.querySelector('.board-tabs');
@@ -660,8 +640,8 @@ function updateWorkspaceChrome() {
         setText('workspaceTitle', '商品管理后台');
         setText('toolbarNote', '在此统一管理商品库、导入监控对象、刷新监控数据和维护类目。');
         activeWorkspaceView = 'library';
-        updateAddProductHelper();
     }
+    updateAddProductHelper();
 
     const searchInput = document.getElementById('productSearch');
     if (searchInput && searchInput.value !== currentSearchTerm) {
@@ -677,8 +657,13 @@ function updateAddProductHelper() {
         return;
     }
 
-    helper.textContent = '新增商品会进入商品总库并自动加入你的个人选品，用于后续统一监控。';
-    addButton.textContent = '加入商品库';
+    if (isAdminRoute()) {
+        helper.textContent = '新增商品会进入商品总库并自动加入你的个人选品，用于后续统一监控。';
+        addButton.textContent = '加入商品库';
+    } else {
+        helper.textContent = '你添加的商品仅进入“我的选品池”，不会展示到商品总库，也不会被其他用户看到。';
+        addButton.textContent = '加入我的选品';
+    }
 }
 
 function getBaseProductsForView() {
@@ -701,7 +686,7 @@ function renderProducts() {
     if (productMeta.filteredTotal === 0) {
         const emptyText = activeWorkspaceView === 'selected'
             ? '你还没有添加任何选品，先去商品总库选择感兴趣的商品。'
-            : (isAdminRoute() ? '暂无监控样本，先在左侧添加商品进入商品总库。' : '商品总库暂无样本，请联系管理员先完成监控商品配置。');
+            : (isAdminRoute() ? '暂无监控样本，先在左侧添加商品进入商品总库。' : '商品总库暂无样本。你可以先在左侧添加商品，添加后会进入“我的选品池”仅自己可见。');
         tbody.innerHTML = '<tr><td colspan="12" class="table-empty">' + emptyText + '</td></tr>';
         applyColumnVisibility();
         return;
@@ -718,12 +703,13 @@ function renderProducts() {
 }
 
 function renderProductRow(product) {
+    const productLink = product.canonical_url || product.url;
     return '<tr>' +
         '<td data-col="product_name">' +
             '<div class="product-cell">' +
                 renderProductThumb(product) +
                 '<div class="product-copy">' +
-                    '<a class="product-link" href="' + escapeHtml(product.url) + '" target="_blank" rel="noopener noreferrer" title="' + escapeHtml(product.name) + '">' + escapeHtml(product.name) + '</a>' +
+                    '<a class="product-link" href="' + escapeHtml(productLink) + '" target="_blank" rel="noopener noreferrer" title="' + escapeHtml(product.name) + '">' + escapeHtml(product.name) + '</a>' +
                     '<div class="product-meta">' + escapeHtml(product.shop_name || product.shopName || '未知店铺') + '</div>' +
                 '</div>' +
             '</div>' +
@@ -1003,7 +989,7 @@ function renderAdminProductCategories() {
                 '<div class="product-cell admin-product-cell">' +
                     renderProductThumb(product) +
                     '<div class="product-copy">' +
-                        '<a class="product-link" href="' + escapeHtml(product.url) + '" target="_blank" rel="noopener noreferrer" title="' + escapeHtml(product.name) + '">' + escapeHtml(product.name) + '</a>' +
+                        '<a class="product-link" href="' + escapeHtml(product.canonical_url || product.url) + '" target="_blank" rel="noopener noreferrer" title="' + escapeHtml(product.name) + '">' + escapeHtml(product.name) + '</a>' +
                         '<div class="product-meta">' + escapeHtml(product.shop_name || product.shopName || '未知店铺') + '</div>' +
                     '</div>' +
                 '</div>' +
@@ -1028,7 +1014,7 @@ function renderAdminCategoryStatusSummary() {
 
     const counts = productMeta.categoryStatusSummary || {};
     const items = [
-        { key: 'queued', label: '待豆包' },
+        { key: 'queued', label: '待AI' },
         { key: 'processing', label: '处理中' },
         { key: 'completed', label: '已完成' },
         { key: 'manual', label: '人工修正' },
@@ -2252,7 +2238,7 @@ function ensureChartJsLoaded() {
 }
 
 function renderProductThumb(product) {
-    const productUrl = escapeHtml(product.url || '#');
+    const productUrl = escapeHtml(product.canonical_url || product.url || '#');
     const productName = escapeHtml(product.name || '未命名商品');
     const imageUrl = escapeHtml(buildThumbnailUrl(product.imageUrl || ''));
 

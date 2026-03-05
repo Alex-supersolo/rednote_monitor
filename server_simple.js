@@ -35,6 +35,9 @@ const {
     verifyConnection,
     getProductById,
     getProductByUrl,
+    getPublicProductByCanonicalUrl,
+    getUserPrivateProductByCanonicalUrl,
+    buildPrivateProductStorageUrl,
     createProduct,
     updateProductSnapshot,
     upsertDailySnapshot,
@@ -1241,43 +1244,102 @@ async function addProductsToLibraryForUserBatch(user, rawUrls, options = {}) {
 }
 
 async function addProductToLibraryForUser(user, rawUrl, options = {}) {
-    const processedUrl = await processXhsUrl(rawUrl, { browser: options.browser });
-    let existingProduct = await getProductByUrl(processedUrl);
+    const canonicalUrl = await processXhsUrl(rawUrl, { browser: options.browser });
     const adminUser = user?.role === 'admin';
 
-    if (existingProduct) {
-        if (adminUser && existingProduct.visibility_scope === 'private') {
-            await updateProductVisibility(existingProduct.id, 'public', null);
-            existingProduct = await getProductById(existingProduct.id);
-        }
-
-        const alreadySelected = await isProductSelectedByUser(user.id, existingProduct.id);
+    const ensureSelected = async (product) => {
+        const alreadySelected = await isProductSelectedByUser(user.id, product.id);
         if (!alreadySelected) {
-            await addUserSelection(user.id, existingProduct.id);
+            await addUserSelection(user.id, product.id);
         }
+        return alreadySelected;
+    };
 
-        const isPublicProduct = existingProduct.visibility_scope !== 'private';
-        const message = isPublicProduct
-            ? (alreadySelected ? '该商品已在商品总库，也已在你的选品中' : '该商品已在商品总库，已加入你的选品')
-            : (alreadySelected ? '该商品已在你的选品池中' : '该商品已加入你的选品池（不会展示到商品总库）');
-
+    // 1) Public product has highest priority for everyone.
+    let existingPublicProduct = await getPublicProductByCanonicalUrl(canonicalUrl);
+    if (!existingPublicProduct) {
+        // Backward compatibility for old records that have no canonical_url.
+        const legacyByUrl = await getProductByUrl(canonicalUrl);
+        if (legacyByUrl && legacyByUrl.visibility_scope === 'public') {
+            existingPublicProduct = legacyByUrl;
+        }
+    }
+    if (existingPublicProduct) {
+        const alreadySelected = await ensureSelected(existingPublicProduct);
         return {
-            message,
-            product: existingProduct,
+            message: alreadySelected ? '该商品已在商品总库，也已在你的选品中' : '该商品已在商品总库，已加入你的选品',
+            product: existingPublicProduct,
             existed: true,
             selected: true
         };
     }
 
-    const productData = await scrapeProductData(processedUrl, {
+    if (adminUser) {
+        const productData = await scrapeProductData(canonicalUrl, {
+            browser: options.browser
+        });
+        const product = await createProduct(canonicalUrl, productData, {
+            visibilityScope: 'public',
+            ownerUserId: null,
+            canonicalUrl
+        });
+        await upsertDailySnapshot(product.id, productData);
+        await ensureSelected(product);
+        enqueueAiCategorySync({
+            id: product.id,
+            name: productData.name,
+            shopName: productData.shopName,
+            category: productData.category
+        });
+
+        return {
+            message: '商品已加入总库并同步到你的选品',
+            product,
+            existed: false,
+            selected: true
+        };
+    }
+
+    // 2) Member can reuse their own private copy (if any), but never reuse others' private copy.
+    let ownPrivateProduct = await getUserPrivateProductByCanonicalUrl(user.id, canonicalUrl);
+    if (!ownPrivateProduct) {
+        const legacyByUrl = await getProductByUrl(canonicalUrl);
+        if (legacyByUrl && legacyByUrl.visibility_scope === 'private' && legacyByUrl.owner_user_id === user.id) {
+            ownPrivateProduct = legacyByUrl;
+        }
+    }
+    if (ownPrivateProduct) {
+        const alreadySelected = await ensureSelected(ownPrivateProduct);
+        return {
+            message: alreadySelected ? '该商品已在你的选品池中' : '该商品已加入你的选品池（不会展示到商品总库）',
+            product: ownPrivateProduct,
+            existed: true,
+            selected: true
+        };
+    }
+
+    // 3) Create a dedicated private product record for this user.
+    const productData = await scrapeProductData(canonicalUrl, {
         browser: options.browser
     });
-    const product = await createProduct(processedUrl, productData, {
-        visibilityScope: adminUser ? 'public' : 'private',
-        ownerUserId: adminUser ? null : user.id
-    });
+    const privateStorageUrl = buildPrivateProductStorageUrl(canonicalUrl, user.id);
+    let product;
+    try {
+        product = await createProduct(privateStorageUrl, productData, {
+            visibilityScope: 'private',
+            ownerUserId: user.id,
+            canonicalUrl
+        });
+    } catch (error) {
+        // Concurrency fallback: if another request created the same row first, reuse it.
+        const concurrentOwnPrivate = await getUserPrivateProductByCanonicalUrl(user.id, canonicalUrl);
+        if (!concurrentOwnPrivate) {
+            throw error;
+        }
+        product = concurrentOwnPrivate;
+    }
     await upsertDailySnapshot(product.id, productData);
-    await addUserSelection(user.id, product.id);
+    await ensureSelected(product);
     enqueueAiCategorySync({
         id: product.id,
         name: productData.name,
@@ -1286,9 +1348,7 @@ async function addProductToLibraryForUser(user, rawUrl, options = {}) {
     });
 
     return {
-        message: adminUser
-            ? '商品已加入总库并同步到你的选品'
-            : '商品已加入你的选品池（不会展示到商品总库）',
+        message: '商品已加入你的选品池（不会展示到商品总库）',
         product,
         existed: false,
         selected: true
@@ -1543,8 +1603,8 @@ app.patch('/admin/products/:id/category', requireAdminAuth, async (req, res) => 
     }
 });
 
-// 添加商品（仅管理后台）
-app.post('/api/products', requireAdminAuth, async (req, res) => {
+// 添加商品（管理员进入总库，普通用户进入个人私有选品池）
+app.post('/api/products', requireAnyAuth, async (req, res) => {
     const { url } = req.body;
 
     if (!url) {
@@ -1553,7 +1613,7 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
 
     try {
         console.log('收到添加商品请求:', url);
-        const result = await addProductToLibraryForUser(req.currentAdmin, url);
+        const result = await addProductToLibraryForUser(req.actorUser, url);
         console.log('商品添加成功:', result.product);
         res.json(result);
 
@@ -1563,7 +1623,7 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
     }
 });
 
-app.post('/api/products/import', requireAdminAuth, async (req, res) => {
+app.post('/api/products/import', requireAnyAuth, async (req, res) => {
     const items = Array.isArray(req.body?.items) ? req.body.items : [];
     const cleanedItems = items
         .map(item => String(item || '').trim())
@@ -1575,7 +1635,7 @@ app.post('/api/products/import', requireAdminAuth, async (req, res) => {
 
     const uniqueItems = Array.from(new Set(cleanedItems));
     try {
-        const activeJob = getActiveUserJob(importJobs, req.currentAdmin);
+        const activeJob = getActiveUserJob(importJobs, req.actorUser);
         if (activeJob && (activeJob.status === 'queued' || activeJob.status === 'running')) {
             return res.status(202).json({
                 message: '已有导入任务进行中',
@@ -1583,12 +1643,12 @@ app.post('/api/products/import', requireAdminAuth, async (req, res) => {
             });
         }
 
-        const job = createImportJob(uniqueItems.length, 'manual', req.currentAdmin);
+        const job = createImportJob(uniqueItems.length, 'manual', req.actorUser);
         markImportJobStarted(job);
 
         (async () => {
             try {
-                await addProductsToLibraryForUserBatch(req.currentAdmin, uniqueItems, {
+                await addProductsToLibraryForUserBatch(req.actorUser, uniqueItems, {
                     concurrency: 3,
                     onProgress(result, counts) {
                         job.successCount = counts.successCount;
@@ -1904,8 +1964,8 @@ app.get('/api/refresh-jobs/:id', requireAdminAuth, (req, res) => {
     res.json(buildRefreshJobSummary(job));
 });
 
-app.get('/api/import-jobs/active', requireAdminAuth, (req, res) => {
-    const activeJob = getActiveUserJob(importJobs, req.currentAdmin);
+app.get('/api/import-jobs/active', requireAnyAuth, (req, res) => {
+    const activeJob = getActiveUserJob(importJobs, req.actorUser);
     if (!activeJob) {
         return res.status(204).end();
     }
@@ -1913,12 +1973,12 @@ app.get('/api/import-jobs/active', requireAdminAuth, (req, res) => {
     res.json(buildImportJobSummary(activeJob));
 });
 
-app.get('/api/import-jobs/:id', requireAdminAuth, (req, res) => {
+app.get('/api/import-jobs/:id', requireAnyAuth, (req, res) => {
     const job = importJobs.get(req.params.id);
     if (!job) {
         return res.status(404).json({ error: '导入任务不存在' });
     }
-    if (!isUserJobOwner(job, req.currentAdmin)) {
+    if (!isUserJobOwner(job, req.actorUser)) {
         return res.status(403).json({ error: '无权查看该导入任务' });
     }
 

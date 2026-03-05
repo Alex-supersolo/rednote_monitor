@@ -78,6 +78,7 @@ function initializeDatabase() {
         CREATE TABLE IF NOT EXISTS products (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             url TEXT NOT NULL UNIQUE,
+            canonical_url TEXT NOT NULL,
             name TEXT NOT NULL,
             image_url TEXT,
             category TEXT NOT NULL DEFAULT '其他',
@@ -170,6 +171,10 @@ function ensureProductColumns(database) {
         database.exec('ALTER TABLE products ADD COLUMN image_url TEXT');
     }
 
+    if (!columnNames.has('canonical_url')) {
+        database.exec('ALTER TABLE products ADD COLUMN canonical_url TEXT');
+    }
+
     if (!columnNames.has('category')) {
         database.exec("ALTER TABLE products ADD COLUMN category TEXT NOT NULL DEFAULT '其他'");
     }
@@ -196,7 +201,14 @@ function ensureProductColumns(database) {
 
     database.exec(`
         UPDATE products
-        SET category_source = COALESCE(NULLIF(category_source, ''), 'rule'),
+        SET canonical_url = COALESCE(
+                NULLIF(canonical_url, ''),
+                CASE
+                    WHEN instr(url, '#private-owner-') > 0 THEN substr(url, 1, instr(url, '#private-owner-') - 1)
+                    ELSE url
+                END
+            ),
+            category_source = COALESCE(NULLIF(category_source, ''), 'rule'),
             category_status = COALESCE(NULLIF(category_status, ''), 'rule_only'),
             category_status_updated_at = COALESCE(category_status_updated_at, updated_at, created_at),
             visibility_scope = CASE
@@ -210,6 +222,9 @@ function ensureProductColumns(database) {
     `);
 
     database.exec(`
+        CREATE INDEX IF NOT EXISTS idx_products_canonical_url
+        ON products(canonical_url);
+
         CREATE INDEX IF NOT EXISTS idx_products_visibility_scope
         ON products(visibility_scope);
 
@@ -285,8 +300,8 @@ function bootstrapFromJsonIfNeeded(database) {
 
     const insertProduct = database.prepare(`
         INSERT INTO products (
-            id, url, name, image_url, category, category_source, category_status, category_status_updated_at, visibility_scope, owner_user_id, price, product_sales, shop_name, shop_sales, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            id, url, canonical_url, name, image_url, category, category_source, category_status, category_status_updated_at, visibility_scope, owner_user_id, price, product_sales, shop_name, shop_sales, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const insertSales = database.prepare(`
         INSERT INTO sales_data (
@@ -304,6 +319,7 @@ function bootstrapFromJsonIfNeeded(database) {
             const createdAt = product.created_at || new Date().toISOString();
             insertProduct.run(
                 product.id,
+                product.url,
                 product.url,
                 product.name || '未命名商品',
                 product.imageUrl || product.image_url || '',
@@ -395,6 +411,7 @@ function mapProductRow(row) {
     return {
         id: row.id,
         url: row.url,
+        canonical_url: row.canonical_url || row.url,
         name: row.name,
         imageUrl: row.image_url || '',
         category,
@@ -452,17 +469,65 @@ async function getProductByUrl(url) {
     return mapProductRow(row);
 }
 
+function normalizeCanonicalUrl(url) {
+    return String(url || '').trim().replace(/#private-owner-\d+$/i, '');
+}
+
+function buildPrivateProductStorageUrl(canonicalUrl, userId) {
+    const normalizedUserId = toPositiveInteger(userId);
+    const normalizedUrl = normalizeCanonicalUrl(canonicalUrl);
+    if (!normalizedUserId || !normalizedUrl) {
+        return '';
+    }
+    return `${normalizedUrl}#private-owner-${normalizedUserId}`;
+}
+
+async function getPublicProductByCanonicalUrl(canonicalUrl) {
+    const normalizedUrl = normalizeCanonicalUrl(canonicalUrl);
+    if (!normalizedUrl) {
+        return null;
+    }
+
+    const row = getDb().prepare(`
+        SELECT *
+        FROM products
+        WHERE canonical_url = ? AND visibility_scope = 'public'
+        ORDER BY id ASC
+        LIMIT 1
+    `).get(normalizedUrl);
+    return mapProductRow(row);
+}
+
+async function getUserPrivateProductByCanonicalUrl(userId, canonicalUrl) {
+    const normalizedUserId = toPositiveInteger(userId);
+    const normalizedUrl = normalizeCanonicalUrl(canonicalUrl);
+    if (!normalizedUserId || !normalizedUrl) {
+        return null;
+    }
+
+    const row = getDb().prepare(`
+        SELECT *
+        FROM products
+        WHERE canonical_url = ? AND visibility_scope = 'private' AND owner_user_id = ?
+        ORDER BY id DESC
+        LIMIT 1
+    `).get(normalizedUrl, normalizedUserId);
+    return mapProductRow(row);
+}
+
 async function createProduct(url, productData, options = {}) {
     const nowIso = new Date().toISOString();
     const visibilityScope = normalizeVisibilityScope(options.visibilityScope);
     const ownerUserId = visibilityScope === 'private' ? toPositiveInteger(options.ownerUserId) : null;
+    const canonicalUrl = normalizeCanonicalUrl(options.canonicalUrl || url);
     const row = getDb().prepare(`
         INSERT INTO products (
-            url, name, image_url, category, category_source, category_status, category_status_updated_at, visibility_scope, owner_user_id, price, product_sales, shop_name, shop_sales, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            url, canonical_url, name, image_url, category, category_source, category_status, category_status_updated_at, visibility_scope, owner_user_id, price, product_sales, shop_name, shop_sales, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         RETURNING *
     `).get(
         url,
+        canonicalUrl || String(url || '').trim(),
         productData.name,
         productData.imageUrl || '',
         normalizeCategory(productData.category || inferProductCategoryFromText(productData.name, productData.shopName)),
@@ -1263,6 +1328,9 @@ module.exports = {
     verifyConnection,
     getProductById,
     getProductByUrl,
+    getPublicProductByCanonicalUrl,
+    getUserPrivateProductByCanonicalUrl,
+    buildPrivateProductStorageUrl,
     createProduct,
     updateProductSnapshot,
     upsertDailySnapshot,
