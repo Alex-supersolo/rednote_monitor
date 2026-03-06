@@ -1615,8 +1615,8 @@ app.get('/admin/invite-codes', requireAdminAuth, async (req, res) => {
     try {
         res.json(await listInviteCodes());
     } catch (error) {
-        console.error('获取邀请码失败:', error.message);
-        res.status(500).json({ error: '获取邀请码失败' });
+        console.error('获取兑换码失败:', error.message);
+        res.status(500).json({ error: '获取兑换码失败' });
     }
 });
 
@@ -1629,12 +1629,12 @@ app.post('/admin/invite-codes', requireAdminAuth, async (req, res) => {
             durationDays: req.body?.durationDays
         });
         res.status(201).json({
-            message: '邀请码已创建',
+            message: '兑换码已创建',
             inviteCode
         });
     } catch (error) {
-        console.error('创建邀请码失败:', error.message);
-        res.status(400).json({ error: error.message || '创建邀请码失败' });
+        console.error('创建兑换码失败:', error.message);
+        res.status(400).json({ error: error.message || '创建兑换码失败' });
     }
 });
 
@@ -1646,10 +1646,10 @@ app.patch('/admin/invite-codes/:id', requireAdminAuth, async (req, res) => {
             durationDays: req.body?.durationDays,
             isActive: req.body?.isActive
         });
-        res.json({ message: '邀请码已更新' });
+        res.json({ message: '兑换码已更新' });
     } catch (error) {
-        console.error('更新邀请码失败:', error.message);
-        res.status(400).json({ error: error.message || '更新邀请码失败' });
+        console.error('更新兑换码失败:', error.message);
+        res.status(400).json({ error: error.message || '更新兑换码失败' });
     }
 });
 

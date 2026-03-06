@@ -748,7 +748,7 @@ async function loadAdminData() {
             throw new Error(usersData.error || '获取用户失败');
         }
         if (!codesResponse.ok) {
-            throw new Error(codesData.error || '获取邀请码失败');
+            throw new Error(codesData.error || '获取兑换码失败');
         }
 
         adminUsers = usersData;
@@ -777,7 +777,7 @@ function switchAdminTopView(view, buttonEl) {
         return;
     }
 
-    const supportedViews = new Set(['products', 'import', 'invite', 'users', 'categories']);
+    const supportedViews = new Set(['products', 'import', 'invite', 'users', 'customers', 'categories']);
     const nextView = supportedViews.has(view) ? view : 'products';
     activeAdminTopView = nextView;
 
@@ -809,6 +809,7 @@ function applyAdminTopView() {
     const adminBoard = document.getElementById('adminBoard');
     const inviteCard = document.getElementById('inviteCodesCard');
     const usersCard = document.getElementById('usersCard');
+    const customersCard = document.getElementById('customersCard');
     const categoriesCard = document.getElementById('categoriesCard');
     const refreshAllButton = document.getElementById('refreshAllButton');
 
@@ -836,8 +837,8 @@ function applyAdminTopView() {
             showRefresh: false
         },
         invite: {
-            title: '邀请码管理',
-            note: '创建、停用和导出邀请码；支持不同会员期限的兑换码管理。',
+            title: '兑换码管理',
+            note: '创建、停用和导出兑换码；可查看已绑定用户和最近使用时间。',
             showSidebar: false,
             showMainPanel: true,
             showToolbar: false,
@@ -848,7 +849,18 @@ function applyAdminTopView() {
         },
         users: {
             title: '用户管理',
-            note: '维护账号角色和启停状态，查看用户选品数量与注册时间。',
+            note: '管理可登录管理后台的账号，维护启停状态与后台访问权限。',
+            showSidebar: false,
+            showMainPanel: true,
+            showToolbar: false,
+            showSortControls: false,
+            showProducts: false,
+            showAdminBoard: true,
+            showRefresh: false
+        },
+        customers: {
+            title: '客户管理',
+            note: '管理客户端注册的普通会员账号，查看注册时间和预计到期时间。',
             showSidebar: false,
             showMainPanel: true,
             showToolbar: false,
@@ -903,6 +915,9 @@ function applyAdminTopView() {
     if (usersCard) {
         usersCard.hidden = activeAdminTopView !== 'users';
     }
+    if (customersCard) {
+        customersCard.hidden = activeAdminTopView !== 'customers';
+    }
     if (categoriesCard) {
         categoriesCard.hidden = activeAdminTopView !== 'categories';
     }
@@ -934,7 +949,7 @@ function updateWorkspaceChrome() {
     const notes = {
         library: '商品总库展示所有已进入监控池的商品，你可以把其中感兴趣的商品加入自己的选品。',
         selected: '这里展示你已经加入“我的选品”的商品数据，更适合持续跟踪自己的候选池。',
-        admin: '管理员可以在这里管理邀请码、用户角色和账号状态。'
+        admin: '管理员可以在这里管理兑换码、用户角色和账号状态。'
     };
 
     const viewKey = adminPortal ? 'admin' : activeWorkspaceView;
@@ -1154,14 +1169,14 @@ async function createInviteCodeItem() {
         const data = await response.json();
 
         if (!response.ok) {
-            throw new Error(data.error || '创建邀请码失败');
+            throw new Error(data.error || '创建兑换码失败');
         }
 
         document.getElementById('newInviteCode').value = '';
         document.getElementById('newInviteDescription').value = '';
         document.getElementById('newInviteDurationDays').value = '365';
         document.getElementById('newInviteMaxUses').value = '1';
-        showMessage(data.message || '邀请码已创建', 'success');
+        showMessage(data.message || '兑换码已创建', 'success');
         await loadAdminData();
     } catch (error) {
         showMessage(error.message, 'error');
@@ -1178,10 +1193,10 @@ async function toggleInviteCode(inviteCodeId, nextActive) {
         const data = await response.json();
 
         if (!response.ok) {
-            throw new Error(data.error || '更新邀请码失败');
+            throw new Error(data.error || '更新兑换码失败');
         }
 
-        showMessage(data.message || '邀请码已更新', 'success');
+        showMessage(data.message || '兑换码已更新', 'success');
         await loadAdminData();
     } catch (error) {
         showMessage(error.message, 'error');
@@ -1231,7 +1246,8 @@ async function toggleUserActive(userId, nextActive) {
 
 function renderAdminBoard() {
     renderInviteCodes();
-    renderUsers();
+    renderAdminUsers();
+    renderCustomers();
     renderAdminProductCategories();
 }
 
@@ -1260,7 +1276,7 @@ function getExportTimestamp() {
 
 async function exportInviteCodes() {
     if (!isAdminRoute()) {
-        showMessage('仅管理后台支持导出邀请码', 'warning');
+        showMessage('仅管理后台支持导出兑换码', 'warning');
         return;
     }
 
@@ -1269,12 +1285,12 @@ async function exportInviteCodes() {
     }
 
     if (!Array.isArray(adminInviteCodes) || adminInviteCodes.length === 0) {
-        showMessage('暂无可导出的邀请码', 'warning');
+        showMessage('暂无可导出的兑换码', 'warning');
         return;
     }
 
     const rows = [
-        ['邀请码', '备注', '期限', '已使用', '最大使用次数', '状态', '创建时间']
+        ['兑换码', '备注', '期限', '已使用', '最大使用次数', '绑定用户', '最近使用时间', '状态', '创建时间']
     ];
 
     adminInviteCodes.forEach(item => {
@@ -1284,6 +1300,8 @@ async function exportInviteCodes() {
             formatInviteDuration(item.duration_days),
             String(item.used_count || 0),
             item.max_uses === null || item.max_uses === undefined ? '' : String(item.max_uses),
+            getInviteCodeBindingsText(item),
+            item.last_used_at ? formatAbsoluteDate(item.last_used_at) : '',
             getInviteCodeStatusLabel(item),
             formatAbsoluteDate(item.created_at)
         ]);
@@ -1294,12 +1312,12 @@ async function exportInviteCodes() {
     const downloadUrl = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = downloadUrl;
-    link.download = 'invite-codes-' + getExportTimestamp() + '.csv';
+    link.download = 'redeem-codes-' + getExportTimestamp() + '.csv';
     document.body.appendChild(link);
     link.click();
     link.remove();
     URL.revokeObjectURL(downloadUrl);
-    showMessage('邀请码导出成功', 'success');
+    showMessage('兑换码导出成功', 'success');
 }
 
 function renderInviteCodes() {
@@ -1309,7 +1327,7 @@ function renderInviteCodes() {
     }
 
     if (adminInviteCodes.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="6" class="table-empty">暂无邀请码。</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" class="table-empty">暂无兑换码。</td></tr>';
         return;
     }
 
@@ -1322,10 +1340,20 @@ function renderInviteCodes() {
             '<td>' + escapeHtml(item.description || '-') + '</td>' +
             '<td>' + escapeHtml(durationLabel) + '</td>' +
             '<td>' + usage + '</td>' +
+            '<td>' + escapeHtml(getInviteCodeBindingsText(item)) + '</td>' +
+            '<td>' + (item.last_used_at ? renderTimeCell(item.last_used_at) : '-') + '</td>' +
             '<td><span class="status-pill ' + (item.is_active ? 'status-active' : 'status-paused') + '">' + (item.is_active ? '启用中' : '已停用') + '</span></td>' +
             '<td><button class="btn-small ' + (item.is_active ? 'btn-danger' : 'btn-primary-soft') + '" onclick="toggleInviteCode(' + item.id + ', ' + (!item.is_active) + ')">' + (item.is_active ? '停用' : '启用') + '</button></td>' +
         '</tr>';
     }).join('');
+}
+
+function getInviteCodeBindingsText(item) {
+    const names = String(item && item.bound_usernames ? item.bound_usernames : '').trim();
+    if (names) {
+        return names;
+    }
+    return Number(item && item.used_count) > 0 ? '历史使用记录未绑定' : '-';
 }
 
 function formatInviteDuration(durationDays) {
@@ -1339,21 +1367,28 @@ function formatInviteDuration(durationDays) {
     return '年卡（365天）';
 }
 
-function renderUsers() {
+function getAdminAccounts() {
+    return adminUsers.filter(user => user.role === 'admin');
+}
+
+function getCustomerAccounts() {
+    return adminUsers.filter(user => user.role !== 'admin');
+}
+
+function renderAdminUsers() {
     const tbody = document.getElementById('usersTableBody');
     if (!tbody) {
         return;
     }
 
-    if (adminUsers.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="6" class="table-empty">暂无用户。</td></tr>';
+    const adminAccounts = getAdminAccounts();
+    if (adminAccounts.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" class="table-empty">暂无可登录后台的账号。</td></tr>';
         return;
     }
 
-    tbody.innerHTML = adminUsers.map(user => {
-        const roleButton = user.role === 'admin'
-            ? '<button class="btn-small btn-secondary" onclick="changeUserRole(' + user.id + ', \'member\')">改为成员</button>'
-            : '<button class="btn-small btn-primary-soft" onclick="changeUserRole(' + user.id + ', \'admin\')">设为管理员</button>';
+    tbody.innerHTML = adminAccounts.map(user => {
+        const roleButton = '<button class="btn-small btn-secondary" onclick="changeUserRole(' + user.id + ', \'member\')">移出后台</button>';
         const activeButton = user.is_active
             ? '<button class="btn-small btn-danger" onclick="toggleUserActive(' + user.id + ', false)">停用</button>'
             : '<button class="btn-small btn-primary-soft" onclick="toggleUserActive(' + user.id + ', true)">启用</button>';
@@ -1361,10 +1396,39 @@ function renderUsers() {
 
         return '<tr>' +
             '<td>' + escapeHtml(user.username) + currentUserMark + '</td>' +
-            '<td><span class="status-pill ' + (user.role === 'admin' ? 'status-admin' : 'status-member') + '">' + (user.role === 'admin' ? 'admin' : 'member') + '</span></td>' +
             '<td><span class="status-pill ' + (user.is_active ? 'status-active' : 'status-paused') + '">' + (user.is_active ? '启用' : '停用') + '</span></td>' +
             '<td>' + formatNumber(user.selection_count || 0) + '</td>' +
             '<td>' + renderTimeCell(user.created_at) + '</td>' +
+            '<td><div class="action-buttons">' + roleButton + activeButton + '</div></td>' +
+        '</tr>';
+    }).join('');
+}
+
+function renderCustomers() {
+    const tbody = document.getElementById('customersTableBody');
+    if (!tbody) {
+        return;
+    }
+
+    const customers = getCustomerAccounts();
+    if (customers.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" class="table-empty">暂无客户账号。</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = customers.map(user => {
+        const roleButton = '<button class="btn-small btn-primary-soft" onclick="changeUserRole(' + user.id + ', \'admin\')">授予后台权限</button>';
+        const activeButton = user.is_active
+            ? '<button class="btn-small btn-danger" onclick="toggleUserActive(' + user.id + ', false)">停用</button>'
+            : '<button class="btn-small btn-primary-soft" onclick="toggleUserActive(' + user.id + ', true)">启用</button>';
+
+        return '<tr>' +
+            '<td>' + escapeHtml(user.username) + '</td>' +
+            '<td><span class="status-pill ' + (user.is_active ? 'status-active' : 'status-paused') + '">' + (user.is_active ? '启用' : '停用') + '</span></td>' +
+            '<td>' + escapeHtml(formatMembershipPlanLabel(user)) + '</td>' +
+            '<td>' + formatNumber(user.selection_count || 0) + '</td>' +
+            '<td>' + renderTimeCell(user.created_at) + '</td>' +
+            '<td>' + renderTimeCell(user.membership_expires_at) + '</td>' +
             '<td><div class="action-buttons">' + roleButton + activeButton + '</div></td>' +
         '</tr>';
     }).join('');

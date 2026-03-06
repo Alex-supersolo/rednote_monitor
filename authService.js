@@ -89,7 +89,7 @@ function validateRegistrationInput(username, password, inviteCode) {
     }
 
     if (!normalizedInviteCode) {
-        throw new Error('请输入邀请码');
+        throw new Error('请输入兑换码');
     }
 
     return {

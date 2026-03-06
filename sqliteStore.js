@@ -211,6 +211,17 @@ function initializeDatabase() {
             created_at TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS invite_code_bindings (
+            invite_code_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            bind_source TEXT NOT NULL DEFAULT 'redeem',
+            first_used_at TEXT NOT NULL,
+            last_used_at TEXT NOT NULL,
+            PRIMARY KEY (invite_code_id, user_id),
+            FOREIGN KEY (invite_code_id) REFERENCES invite_codes(id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+
         CREATE TABLE IF NOT EXISTS sessions (
             token TEXT PRIMARY KEY,
             user_id INTEGER NOT NULL,
@@ -239,6 +250,12 @@ function initializeDatabase() {
 
         CREATE INDEX IF NOT EXISTS idx_selections_product_id
         ON user_product_selections(product_id);
+
+        CREATE INDEX IF NOT EXISTS idx_invite_bindings_code_id
+        ON invite_code_bindings(invite_code_id);
+
+        CREATE INDEX IF NOT EXISTS idx_invite_bindings_user_id
+        ON invite_code_bindings(user_id);
     `);
 
     ensureProductColumns(database);
@@ -420,7 +437,7 @@ function seedInviteCodes(database) {
     database.exec('BEGIN');
     try {
         for (const code of rawCodes) {
-            insertInviteCode.run(code, '环境变量预置邀请码', nowIso);
+            insertInviteCode.run(code, '环境变量预置兑换码', nowIso);
         }
         database.exec('COMMIT');
     } catch (error) {
@@ -616,6 +633,19 @@ function getInviteCodeRow(code) {
         FROM invite_codes
         WHERE code = ? AND is_active = 1
     `).get(String(code || '').trim());
+}
+
+function upsertInviteCodeBinding(database, inviteCodeId, userId, source = 'redeem', usedAt = new Date().toISOString()) {
+    const normalizedSource = source === 'register' ? 'register' : 'redeem';
+    database.prepare(`
+        INSERT INTO invite_code_bindings (
+            invite_code_id, user_id, bind_source, first_used_at, last_used_at
+        )
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(invite_code_id, user_id) DO UPDATE SET
+            bind_source = excluded.bind_source,
+            last_used_at = excluded.last_used_at
+    `).run(inviteCodeId, userId, normalizedSource, usedAt, usedAt);
 }
 
 function generateInviteCode() {
@@ -1214,7 +1244,7 @@ async function createUserWithInvite(username, passwordHash, inviteCode) {
     try {
         const inviteCodeCount = database.prepare('SELECT COUNT(*) AS count FROM invite_codes WHERE is_active = 1').get().count;
         if (inviteCodeCount === 0) {
-            throw new Error('当前系统还未配置邀请码，请联系管理员');
+            throw new Error('当前系统还未配置兑换码，请联系管理员');
         }
 
         const existingUser = database.prepare(`
@@ -1229,11 +1259,11 @@ async function createUserWithInvite(username, passwordHash, inviteCode) {
 
         const inviteRow = getInviteCodeRow(normalizedInviteCode);
         if (!inviteRow) {
-            throw new Error('邀请码无效或已停用');
+            throw new Error('兑换码无效或已停用');
         }
 
         if (inviteRow.max_uses !== null && inviteRow.used_count >= inviteRow.max_uses) {
-            throw new Error('邀请码已达到使用上限');
+            throw new Error('兑换码已达到使用上限');
         }
 
         const inviteDurationDays = normalizeMembershipDurationDays(inviteRow.duration_days);
@@ -1275,6 +1305,8 @@ async function createUserWithInvite(username, passwordHash, inviteCode) {
             SET used_count = used_count + 1
             WHERE id = ?
         `).run(inviteRow.id);
+
+        upsertInviteCodeBinding(database, inviteRow.id, userRow.id, 'register', nowIso);
 
         database.exec('COMMIT');
         return mapUserRow(userRow);
@@ -1432,6 +1464,8 @@ async function redeemInviteCodeForUser(userId, inviteCode) {
             SET used_count = used_count + 1
             WHERE id = ?
         `).run(inviteRow.id);
+
+        upsertInviteCodeBinding(database, inviteRow.id, userId, 'redeem', nowIso);
 
         const updatedUserRow = database.prepare(`
             SELECT *
@@ -1593,9 +1627,30 @@ async function updateUserActiveStatus(targetUserId, isActive, actorUserId) {
 
 async function listInviteCodes() {
     return getDb().prepare(`
-        SELECT id, code, description, max_uses, duration_days, used_count, is_active, created_at
-        FROM invite_codes
-        ORDER BY created_at DESC
+        SELECT
+            c.id,
+            c.code,
+            c.description,
+            c.max_uses,
+            c.duration_days,
+            c.used_count,
+            c.is_active,
+            c.created_at,
+            COALESCE(b.bound_usernames, '') AS bound_usernames,
+            COALESCE(b.bound_user_count, 0) AS bound_user_count,
+            b.last_used_at
+        FROM invite_codes c
+        LEFT JOIN (
+            SELECT
+                icb.invite_code_id,
+                GROUP_CONCAT(u.username, '、') AS bound_usernames,
+                COUNT(*) AS bound_user_count,
+                MAX(icb.last_used_at) AS last_used_at
+            FROM invite_code_bindings icb
+            JOIN users u ON u.id = icb.user_id
+            GROUP BY icb.invite_code_id
+        ) b ON b.invite_code_id = c.id
+        ORDER BY c.created_at DESC
     `).all().map(row => ({
         id: row.id,
         code: row.code,
@@ -1605,7 +1660,10 @@ async function listInviteCodes() {
         plan: getMembershipPlanByDuration(row.duration_days),
         used_count: Number(row.used_count || 0),
         is_active: Boolean(row.is_active),
-        created_at: row.created_at
+        created_at: row.created_at,
+        bound_usernames: row.bound_usernames || '',
+        bound_user_count: Number(row.bound_user_count || 0),
+        last_used_at: row.last_used_at || null
     }));
 }
 
@@ -1643,7 +1701,7 @@ async function updateInviteCode(inviteCodeId, updates = {}) {
     `).get(inviteCodeId);
 
     if (!current) {
-        throw new Error('邀请码不存在');
+        throw new Error('兑换码不存在');
     }
 
     const nextDescription = updates.description !== undefined
