@@ -93,6 +93,10 @@ const DEFAULT_BROWSER_CANDIDATES = [
     '/snap/bin/chromium',
     '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 ].filter(Boolean);
+const SNAPSHOT_DROP_GUARD_ABS = 500;
+const SNAPSHOT_DROP_GUARD_RATIO = 0.15;
+const SNAPSHOT_SPIKE_GUARD_ABS = 2000;
+const SNAPSHOT_SPIKE_GUARD_RATIO = 2;
 
 // 中间件
 app.use(express.json());
@@ -598,6 +602,89 @@ function parseSalesNumber(salesText) {
     }
 
     return parseInt(text.replace(/[^\d]/g, '')) || 0;
+}
+
+function normalizeSalesMetric(value) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) {
+        return 0;
+    }
+    return Math.max(0, Math.floor(parsed));
+}
+
+async function applySnapshotGuard(productId, productData, contextLabel = 'snapshot') {
+    const sanitized = {
+        ...productData,
+        productSales: normalizeSalesMetric(productData?.productSales),
+        shopSales: normalizeSalesMetric(productData?.shopSales)
+    };
+
+    if (!productId) {
+        return sanitized;
+    }
+
+    let previousSnapshot = null;
+    try {
+        const trendSource = await getTrendData(productId);
+        const rows = Array.isArray(trendSource?.salesRows) ? trendSource.salesRows : [];
+        previousSnapshot = rows.length > 0 ? rows[rows.length - 1] : null;
+    } catch (error) {
+        console.warn(`[snapshot-guard] 读取历史快照失败 (product=${productId}): ${error.message}`);
+        return sanitized;
+    }
+
+    if (!previousSnapshot) {
+        return sanitized;
+    }
+
+    const prevProductSales = normalizeSalesMetric(previousSnapshot.product_sales);
+    const prevShopSales = normalizeSalesMetric(previousSnapshot.shop_sales);
+    const reasons = [];
+
+    if (sanitized.shopSales === 0 && prevShopSales > 0 && sanitized.productSales > 0) {
+        sanitized.shopSales = prevShopSales;
+        reasons.push(`shopSales 0 -> ${prevShopSales}`);
+    }
+
+    if (prevProductSales > 0) {
+        const growth = sanitized.productSales - prevProductSales;
+        const drop = prevProductSales - sanitized.productSales;
+        const copiedShopPattern = sanitized.productSales > 0
+            && Math.abs(sanitized.productSales - sanitized.shopSales) <= Math.max(20, Math.round(sanitized.productSales * 0.02));
+        const shopChange = Math.abs(sanitized.shopSales - prevShopSales);
+        const shopAlmostStable = prevShopSales > 0
+            && shopChange <= Math.max(50, Math.round(prevShopSales * 0.02));
+        const hugeUnexpectedSpike = growth > Math.max(
+            SNAPSHOT_SPIKE_GUARD_ABS,
+            Math.round(prevProductSales * SNAPSHOT_SPIKE_GUARD_RATIO)
+        );
+        if (hugeUnexpectedSpike && copiedShopPattern && shopAlmostStable) {
+            sanitized.productSales = prevProductSales;
+            reasons.push(`abnormal spike ${prevProductSales} -> ${prevProductSales + growth}`);
+        }
+
+        const abnormalDrop = drop > Math.max(
+            SNAPSHOT_DROP_GUARD_ABS,
+            Math.round(prevProductSales * SNAPSHOT_DROP_GUARD_RATIO)
+        );
+        if (abnormalDrop) {
+            sanitized.productSales = prevProductSales;
+            reasons.push(`abnormal drop ${prevProductSales} -> ${prevProductSales - drop}`);
+        }
+    }
+
+    if (sanitized.shopSales > 0 && sanitized.productSales > sanitized.shopSales) {
+        sanitized.shopSales = Math.max(sanitized.productSales, prevShopSales);
+        reasons.push(`shopSales raised to ${sanitized.shopSales}`);
+    }
+
+    if (reasons.length > 0) {
+        console.warn(
+            `[snapshot-guard] ${contextLabel} product=${productId} applied: ${reasons.join('; ')}`
+        );
+    }
+
+    return sanitized;
 }
 
 function normalizeImageUrl(imageUrl) {
@@ -1108,12 +1195,22 @@ async function scrapeProductData(url, options = {}) {
 
         console.log('提取到的原始数据:', data);
 
+        const selectorProductSales = parseSalesNumber(data.salesText);
+        const extractedProductSales = parseSalesNumber(data.debug?.extractedInfo?.sales);
+        const selectorShopSales = parseSalesNumber(data.shopSalesText);
+        const extractedShopSales = parseSalesNumber(data.debug?.extractedInfo?.shopSales);
+        const normalizedProductSales = selectorProductSales > 0 ? selectorProductSales : extractedProductSales;
+        const normalizedShopSales = selectorShopSales > 0 ? selectorShopSales : extractedShopSales;
+        const normalizedPrice = Number.isFinite(Number(data.price)) && Number(data.price) > 0
+            ? Number(data.price)
+            : Number(data.debug?.extractedInfo?.price || 0);
+
         const result = {
-            name: data.debug.extractedInfo.name || data.name,
-            price: data.debug.extractedInfo.price || data.price,
-            productSales: parseSalesNumber(data.debug.extractedInfo.sales || data.salesText),
-            shopName: data.debug.extractedInfo.shopName || data.shopName,
-            shopSales: parseSalesNumber(data.debug.extractedInfo.shopSales || data.shopSalesText),
+            name: (String(data.name || '').trim() || String(data.debug?.extractedInfo?.name || '').trim() || '未知商品'),
+            price: normalizedPrice || 0,
+            productSales: normalizedProductSales,
+            shopName: (String(data.shopName || '').trim() || String(data.debug?.extractedInfo?.shopName || '').trim() || '未知店铺'),
+            shopSales: normalizedShopSales,
             imageUrl: normalizeImageUrl(data.imageUrl)
         };
 
@@ -1168,16 +1265,21 @@ async function refreshProductsBatch(productsToRefresh, options = {}) {
                         productData.categorySource = 'ai';
                         productData.categoryStatus = 'completed';
                     }
-                    await updateProductSnapshot(product.id, productData, now);
-                    await upsertDailySnapshot(product.id, productData, now);
+                    const sanitizedProductData = await applySnapshotGuard(
+                        product.id,
+                        productData,
+                        `batch-refresh/${workerId}`
+                    );
+                    await updateProductSnapshot(product.id, sanitizedProductData, now);
+                    await upsertDailySnapshot(product.id, sanitizedProductData, now);
                     if (product.category_source !== 'manual') {
                         enqueueAiCategorySync({
                             id: product.id,
-                            name: productData.name,
-                            shopName: productData.shopName,
-                            category: productData.category,
-                            category_source: productData.categorySource,
-                            category_status: productData.categoryStatus,
+                            name: sanitizedProductData.name,
+                            shopName: sanitizedProductData.shopName,
+                            category: sanitizedProductData.category,
+                            category_source: sanitizedProductData.categorySource,
+                            category_status: sanitizedProductData.categoryStatus,
                             category_status_updated_at: product.category_status_updated_at,
                             updated_at: now.toISOString()
                         });
@@ -1187,7 +1289,7 @@ async function refreshProductsBatch(productsToRefresh, options = {}) {
                     const result = {
                         id: product.id,
                         success: true,
-                        productSales: productData.productSales
+                        productSales: sanitizedProductData.productSales
                     };
                     results.push(result);
                     if (typeof options.onProgress === 'function') {
@@ -1810,22 +1912,23 @@ app.post('/api/products/:id/refresh', requireAdminAuth, async (req, res) => {
         }
 
         const now = new Date();
-        await updateProductSnapshot(productId, productData, now);
-        await upsertDailySnapshot(productId, productData, now);
+        const sanitizedProductData = await applySnapshotGuard(productId, productData, 'single-refresh');
+        await updateProductSnapshot(productId, sanitizedProductData, now);
+        await upsertDailySnapshot(productId, sanitizedProductData, now);
         if (product.category_source !== 'manual') {
             enqueueAiCategorySync({
                 id: productId,
-                name: productData.name,
-                shopName: productData.shopName,
-                category: productData.category,
-                category_source: productData.categorySource,
-                category_status: productData.categoryStatus,
+                name: sanitizedProductData.name,
+                shopName: sanitizedProductData.shopName,
+                category: sanitizedProductData.category,
+                category_source: sanitizedProductData.categorySource,
+                category_status: sanitizedProductData.categoryStatus,
                 category_status_updated_at: product.category_status_updated_at,
                 updated_at: now.toISOString()
             });
         }
 
-        res.json({ message: '数据刷新成功', data: productData });
+        res.json({ message: '数据刷新成功', data: sanitizedProductData });
 
     } catch (error) {
         console.error('刷新数据失败:', error);
