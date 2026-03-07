@@ -97,6 +97,14 @@ const SNAPSHOT_DROP_GUARD_ABS = 500;
 const SNAPSHOT_DROP_GUARD_RATIO = 0.15;
 const SNAPSHOT_SPIKE_GUARD_ABS = 2000;
 const SNAPSHOT_SPIKE_GUARD_RATIO = 2;
+const LOW_QUALITY_NAME_KEYWORDS = [
+    '卖家口碑',
+    '粉丝数',
+    '进店逛逛',
+    '联系客服',
+    '店铺主页',
+    '全部商品'
+];
 
 // 中间件
 app.use(express.json());
@@ -604,6 +612,69 @@ function parseSalesNumber(salesText) {
     return parseInt(text.replace(/[^\d]/g, '')) || 0;
 }
 
+function normalizeTextCandidate(value) {
+    return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+function containsLowQualityKeyword(text) {
+    return LOW_QUALITY_NAME_KEYWORDS.some(keyword => text.includes(keyword));
+}
+
+function isLikelyProductName(name) {
+    const normalized = normalizeTextCandidate(name);
+    if (!normalized || normalized.length < 4 || normalized.length > 180) {
+        return false;
+    }
+    if (containsLowQualityKeyword(normalized)) {
+        return false;
+    }
+    if (normalized.includes('已售') || normalized.includes('¥')) {
+        return false;
+    }
+    if (/^(未知商品|商品名称|店铺)$/.test(normalized)) {
+        return false;
+    }
+    if (!/[\u4e00-\u9fa5A-Za-z0-9]/.test(normalized)) {
+        return false;
+    }
+    return true;
+}
+
+function isLikelyShopName(name) {
+    const normalized = normalizeTextCandidate(name);
+    if (!normalized || normalized.length < 2 || normalized.length > 60) {
+        return false;
+    }
+    if (containsLowQualityKeyword(normalized)) {
+        return false;
+    }
+    if (normalized.includes('已售') || normalized.includes('¥')) {
+        return false;
+    }
+    if (!/[\u4e00-\u9fa5A-Za-z0-9]/.test(normalized)) {
+        return false;
+    }
+    return true;
+}
+
+function choosePreferredValue(candidates, validator, fallback = '') {
+    for (const candidate of candidates) {
+        const normalized = normalizeTextCandidate(candidate);
+        if (validator(normalized)) {
+            return normalized;
+        }
+    }
+
+    for (const candidate of candidates) {
+        const normalized = normalizeTextCandidate(candidate);
+        if (normalized) {
+            return normalized;
+        }
+    }
+
+    return fallback;
+}
+
 function normalizeSalesMetric(value) {
     const parsed = Number(value);
     if (!Number.isFinite(parsed)) {
@@ -612,9 +683,19 @@ function normalizeSalesMetric(value) {
     return Math.max(0, Math.floor(parsed));
 }
 
-async function applySnapshotGuard(productId, productData, contextLabel = 'snapshot') {
+async function applySnapshotGuard(productId, productData, contextLabel = 'snapshot', options = {}) {
     const sanitized = {
         ...productData,
+        name: choosePreferredValue(
+            [productData?.name, options.existingProductName],
+            isLikelyProductName,
+            '未知商品'
+        ),
+        shopName: choosePreferredValue(
+            [productData?.shopName, options.existingShopName],
+            isLikelyShopName,
+            '未知店铺'
+        ),
         productSales: normalizeSalesMetric(productData?.productSales),
         shopSales: normalizeSalesMetric(productData?.shopSales)
     };
@@ -1206,10 +1287,18 @@ async function scrapeProductData(url, options = {}) {
             : Number(data.debug?.extractedInfo?.price || 0);
 
         const result = {
-            name: (String(data.name || '').trim() || String(data.debug?.extractedInfo?.name || '').trim() || '未知商品'),
+            name: choosePreferredValue(
+                [data.name, data.debug?.extractedInfo?.name],
+                isLikelyProductName,
+                '未知商品'
+            ),
             price: normalizedPrice || 0,
             productSales: normalizedProductSales,
-            shopName: (String(data.shopName || '').trim() || String(data.debug?.extractedInfo?.shopName || '').trim() || '未知店铺'),
+            shopName: choosePreferredValue(
+                [data.shopName, data.debug?.extractedInfo?.shopName],
+                isLikelyShopName,
+                '未知店铺'
+            ),
             shopSales: normalizedShopSales,
             imageUrl: normalizeImageUrl(data.imageUrl)
         };
@@ -1268,7 +1357,11 @@ async function refreshProductsBatch(productsToRefresh, options = {}) {
                     const sanitizedProductData = await applySnapshotGuard(
                         product.id,
                         productData,
-                        `batch-refresh/${workerId}`
+                        `batch-refresh/${workerId}`,
+                        {
+                            existingProductName: product.name,
+                            existingShopName: product.shop_name || product.shopName
+                        }
                     );
                     await updateProductSnapshot(product.id, sanitizedProductData, now);
                     await upsertDailySnapshot(product.id, sanitizedProductData, now);
@@ -1912,7 +2005,10 @@ app.post('/api/products/:id/refresh', requireAdminAuth, async (req, res) => {
         }
 
         const now = new Date();
-        const sanitizedProductData = await applySnapshotGuard(productId, productData, 'single-refresh');
+        const sanitizedProductData = await applySnapshotGuard(productId, productData, 'single-refresh', {
+            existingProductName: product.name,
+            existingShopName: product.shopName || product.shop_name
+        });
         await updateProductSnapshot(productId, sanitizedProductData, now);
         await upsertDailySnapshot(productId, sanitizedProductData, now);
         if (product.category_source !== 'manual') {
