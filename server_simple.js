@@ -97,6 +97,12 @@ const SNAPSHOT_DROP_GUARD_ABS = 500;
 const SNAPSHOT_DROP_GUARD_RATIO = 0.15;
 const SNAPSHOT_SPIKE_GUARD_ABS = 2000;
 const SNAPSHOT_SPIKE_GUARD_RATIO = 2;
+const SNAPSHOT_EXTREME_SPIKE_GUARD_ABS = 500000;
+const SNAPSHOT_EXTREME_SPIKE_GUARD_RATIO = 50;
+const PRICE_SPIKE_GUARD_RATIO = 20;
+const PRICE_SPIKE_GUARD_ABS = 2000;
+const PRICE_ABSOLUTE_GUARD_MAX = 100000;
+const SALES_ABSOLUTE_GUARD_MAX = 50000000;
 const LOW_QUALITY_NAME_KEYWORDS = [
     '卖家口碑',
     '粉丝数',
@@ -602,14 +608,115 @@ async function processXhsUrl(inputText, options = {}) {
 function parseSalesNumber(salesText) {
     if (!salesText) return 0;
 
-    const text = salesText.toString().toLowerCase();
+    const normalizeSalesByUnit = (numberPart, unitPart = '') => {
+        const numeric = Number(numberPart);
+        if (!Number.isFinite(numeric) || numeric <= 0) {
+            return 0;
+        }
 
-    if (text.includes('万')) {
-        const number = parseFloat(text.replace('万', '').replace('+', ''));
-        return Math.floor(number * 10000);
+        let normalized = numeric;
+        if (unitPart === '万') {
+            normalized = numeric * 10000;
+        } else if (unitPart === '千') {
+            normalized = numeric * 1000;
+        }
+
+        if (!Number.isFinite(normalized) || normalized <= 0 || normalized > SALES_ABSOLUTE_GUARD_MAX) {
+            return 0;
+        }
+        return Math.floor(normalized);
+    };
+
+    const text = String(salesText)
+        .replace(/\u00a0/g, ' ')
+        .replace(/,/g, '')
+        .replace(/\+/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+    if (!text) {
+        return 0;
     }
 
-    return parseInt(text.replace(/[^\d]/g, '')) || 0;
+    const soldMatches = Array.from(text.matchAll(/已售\s*([0-9]{1,8}(?:\.[0-9]{1,2})?)\s*([万千]?)/g));
+    for (const match of soldMatches) {
+        const normalized = normalizeSalesByUnit(match[1], match[2] || '');
+        if (normalized > 0) {
+            return normalized;
+        }
+    }
+
+    const unitMatches = Array.from(text.matchAll(/([0-9]{1,8}(?:\.[0-9]{1,2})?)\s*([万千])/g));
+    for (const match of unitMatches) {
+        const normalized = normalizeSalesByUnit(match[1], match[2] || '');
+        if (normalized > 0) {
+            return normalized;
+        }
+    }
+
+    if (text.includes('万') || text.includes('千')) {
+        return 0;
+    }
+
+    const plainMatches = Array.from(text.matchAll(/\b([0-9]{1,8})\b/g));
+    for (const match of plainMatches) {
+        const normalized = normalizeSalesByUnit(match[1], '');
+        if (normalized > 0) {
+            return normalized;
+        }
+    }
+
+    return 0;
+}
+
+function normalizePriceMetric(value) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+        return 0;
+    }
+    if (parsed > PRICE_ABSOLUTE_GUARD_MAX) {
+        return 0;
+    }
+    return Math.round(parsed * 100) / 100;
+}
+
+function parsePriceNumberFromText(value) {
+    if (typeof value === 'number') {
+        return normalizePriceMetric(value);
+    }
+
+    const text = String(value || '')
+        .replace(/\u00a0/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    if (!text) {
+        return 0;
+    }
+
+    const currencyMatch = text.match(/[¥￥]\s*([0-9]{1,7}(?:,[0-9]{3})*(?:\.[0-9]{1,2})?)/);
+    if (currencyMatch) {
+        const parsedCurrency = normalizePriceMetric(currencyMatch[1].replace(/,/g, ''));
+        if (parsedCurrency > 0) {
+            return parsedCurrency;
+        }
+    }
+
+    const decimalMatch = text.match(/\b([0-9]{1,5}\.[0-9]{1,2})\b/);
+    if (decimalMatch) {
+        const parsedDecimal = normalizePriceMetric(decimalMatch[1]);
+        if (parsedDecimal > 0) {
+            return parsedDecimal;
+        }
+    }
+
+    const pureNumberMatch = text.match(/^([0-9]{1,5}(?:\.[0-9]{1,2})?)$/);
+    if (pureNumberMatch) {
+        const parsedPureNumber = normalizePriceMetric(pureNumberMatch[1]);
+        if (parsedPureNumber > 0) {
+            return parsedPureNumber;
+        }
+    }
+
+    return 0;
 }
 
 function normalizeTextCandidate(value) {
@@ -680,7 +787,11 @@ function normalizeSalesMetric(value) {
     if (!Number.isFinite(parsed)) {
         return 0;
     }
-    return Math.max(0, Math.floor(parsed));
+    const normalized = Math.max(0, Math.floor(parsed));
+    if (normalized > SALES_ABSOLUTE_GUARD_MAX) {
+        return 0;
+    }
+    return normalized;
 }
 
 async function applySnapshotGuard(productId, productData, contextLabel = 'snapshot', options = {}) {
@@ -696,6 +807,7 @@ async function applySnapshotGuard(productId, productData, contextLabel = 'snapsh
             isLikelyShopName,
             '未知店铺'
         ),
+        price: normalizePriceMetric(productData?.price),
         productSales: normalizeSalesMetric(productData?.productSales),
         shopSales: normalizeSalesMetric(productData?.shopSales)
     };
@@ -720,7 +832,23 @@ async function applySnapshotGuard(productId, productData, contextLabel = 'snapsh
 
     const prevProductSales = normalizeSalesMetric(previousSnapshot.product_sales);
     const prevShopSales = normalizeSalesMetric(previousSnapshot.shop_sales);
+    const prevPrice = normalizePriceMetric(options.existingPrice);
     const reasons = [];
+
+    if (sanitized.price === 0 && prevPrice > 0) {
+        sanitized.price = prevPrice;
+        reasons.push(`price 0 -> ${prevPrice}`);
+    } else if (prevPrice > 0 && sanitized.price > 0) {
+        const priceGrowth = sanitized.price - prevPrice;
+        const abnormalPriceSpike = priceGrowth > Math.max(
+            PRICE_SPIKE_GUARD_ABS,
+            Math.round(prevPrice * PRICE_SPIKE_GUARD_RATIO)
+        );
+        if (abnormalPriceSpike) {
+            sanitized.price = prevPrice;
+            reasons.push(`price spike ${prevPrice} -> ${prevPrice + priceGrowth}`);
+        }
+    }
 
     if (sanitized.shopSales === 0 && prevShopSales > 0 && sanitized.productSales > 0) {
         sanitized.shopSales = prevShopSales;
@@ -730,6 +858,15 @@ async function applySnapshotGuard(productId, productData, contextLabel = 'snapsh
     if (prevProductSales > 0) {
         const growth = sanitized.productSales - prevProductSales;
         const drop = prevProductSales - sanitized.productSales;
+        const extremeSpike = growth > Math.max(
+            SNAPSHOT_EXTREME_SPIKE_GUARD_ABS,
+            Math.round(prevProductSales * SNAPSHOT_EXTREME_SPIKE_GUARD_RATIO)
+        );
+        if (extremeSpike) {
+            sanitized.productSales = prevProductSales;
+            reasons.push(`extreme spike ${prevProductSales} -> ${prevProductSales + growth}`);
+        }
+
         const copiedShopPattern = sanitized.productSales > 0
             && Math.abs(sanitized.productSales - sanitized.shopSales) <= Math.max(20, Math.round(sanitized.productSales * 0.02));
         const shopChange = Math.abs(sanitized.shopSales - prevShopSales);
@@ -751,6 +888,18 @@ async function applySnapshotGuard(productId, productData, contextLabel = 'snapsh
         if (abnormalDrop) {
             sanitized.productSales = prevProductSales;
             reasons.push(`abnormal drop ${prevProductSales} -> ${prevProductSales - drop}`);
+        }
+    }
+
+    if (prevShopSales > 0) {
+        const shopGrowth = sanitized.shopSales - prevShopSales;
+        const extremeShopSpike = shopGrowth > Math.max(
+            SNAPSHOT_EXTREME_SPIKE_GUARD_ABS,
+            Math.round(prevShopSales * SNAPSHOT_EXTREME_SPIKE_GUARD_RATIO)
+        );
+        if (extremeShopSpike) {
+            sanitized.shopSales = prevShopSales;
+            reasons.push(`shop extreme spike ${prevShopSales} -> ${prevShopSales + shopGrowth}`);
         }
     }
 
@@ -1024,6 +1173,46 @@ async function scrapeProductData(url, options = {}) {
                 return '';
             };
 
+            const parsePriceFromText = (value) => {
+                if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+                    return Math.round(value * 100) / 100;
+                }
+
+                const text = String(value || '')
+                    .replace(/\u00a0/g, ' ')
+                    .replace(/\s+/g, ' ')
+                    .trim();
+                if (!text) {
+                    return 0;
+                }
+
+                const currencyMatch = text.match(/[¥￥]\s*([0-9]{1,7}(?:,[0-9]{3})*(?:\.[0-9]{1,2})?)/);
+                if (currencyMatch) {
+                    const parsed = parseFloat(currencyMatch[1].replace(/,/g, ''));
+                    if (Number.isFinite(parsed) && parsed > 0) {
+                        return Math.round(parsed * 100) / 100;
+                    }
+                }
+
+                const decimalMatch = text.match(/\b([0-9]{1,5}\.[0-9]{1,2})\b/);
+                if (decimalMatch) {
+                    const parsed = parseFloat(decimalMatch[1]);
+                    if (Number.isFinite(parsed) && parsed > 0) {
+                        return Math.round(parsed * 100) / 100;
+                    }
+                }
+
+                const pureNumberMatch = text.match(/^([0-9]{1,5}(?:\.[0-9]{1,2})?)$/);
+                if (pureNumberMatch) {
+                    const parsed = parseFloat(pureNumberMatch[1]);
+                    if (Number.isFinite(parsed) && parsed > 0) {
+                        return Math.round(parsed * 100) / 100;
+                    }
+                }
+
+                return 0;
+            };
+
             // 商品名称 - 扩展更多选择器
             const name = getTextBySelectors([
                 'h1',
@@ -1205,9 +1394,9 @@ async function scrapeProductData(url, options = {}) {
             }
 
             // 提取价格（寻找 ¥ 符号后的数字）
-            const priceMatch = pageText.match(/¥\s*(\d+(?:\.\d+)?)/);
-            if (priceMatch) {
-                extractedPrice = parseFloat(priceMatch[1]);
+            const extractedPriceFromText = parsePriceFromText(pageText);
+            if (extractedPriceFromText > 0) {
+                extractedPrice = extractedPriceFromText;
                 console.log('从文本中提取到价格:', extractedPrice);
             }
 
@@ -1238,7 +1427,7 @@ async function scrapeProductData(url, options = {}) {
 
             // 使用提取到的信息，优先使用智能提取的结果
             const finalName = name || extractedName;
-            const finalPrice = parseFloat(priceText.replace(/[^\d.]/g, '')) || extractedPrice || 0;
+            const finalPrice = parsePriceFromText(priceText) || extractedPrice || 0;
             const finalSales = salesText || extractedSales;
             const finalShopName = shopName || extractedShopName;
             const finalShopSales = shopSalesText || extractedShopSales;
@@ -1282,9 +1471,9 @@ async function scrapeProductData(url, options = {}) {
         const extractedShopSales = parseSalesNumber(data.debug?.extractedInfo?.shopSales);
         const normalizedProductSales = selectorProductSales > 0 ? selectorProductSales : extractedProductSales;
         const normalizedShopSales = selectorShopSales > 0 ? selectorShopSales : extractedShopSales;
-        const normalizedPrice = Number.isFinite(Number(data.price)) && Number(data.price) > 0
-            ? Number(data.price)
-            : Number(data.debug?.extractedInfo?.price || 0);
+        const normalizedPrice = parsePriceNumberFromText(data.price)
+            || parsePriceNumberFromText(data.debug?.originalPriceText)
+            || normalizePriceMetric(data.debug?.extractedInfo?.price);
 
         const result = {
             name: choosePreferredValue(
@@ -1360,7 +1549,8 @@ async function refreshProductsBatch(productsToRefresh, options = {}) {
                         `batch-refresh/${workerId}`,
                         {
                             existingProductName: product.name,
-                            existingShopName: product.shop_name || product.shopName
+                            existingShopName: product.shop_name || product.shopName,
+                            existingPrice: product.price
                         }
                     );
                     await updateProductSnapshot(product.id, sanitizedProductData, now);
@@ -1526,9 +1716,10 @@ async function addProductToLibraryForUser(user, rawUrl, options = {}) {
     }
 
     if (adminUser) {
-        const productData = await scrapeProductData(canonicalUrl, {
+        const rawProductData = await scrapeProductData(canonicalUrl, {
             browser: options.browser
         });
+        const productData = await applySnapshotGuard(null, rawProductData, 'create-public-product');
         const product = await createProduct(canonicalUrl, productData, {
             visibilityScope: 'public',
             ownerUserId: null,
@@ -1571,9 +1762,10 @@ async function addProductToLibraryForUser(user, rawUrl, options = {}) {
 
     // 3) Create a dedicated private product record for this user.
     await assertMonitorQuotaAvailable(user);
-    const productData = await scrapeProductData(canonicalUrl, {
+    const rawProductData = await scrapeProductData(canonicalUrl, {
         browser: options.browser
     });
+    const productData = await applySnapshotGuard(null, rawProductData, 'create-private-product');
     const privateStorageUrl = buildPrivateProductStorageUrl(canonicalUrl, user.id);
     let product;
     try {
@@ -2007,7 +2199,8 @@ app.post('/api/products/:id/refresh', requireAdminAuth, async (req, res) => {
         const now = new Date();
         const sanitizedProductData = await applySnapshotGuard(productId, productData, 'single-refresh', {
             existingProductName: product.name,
-            existingShopName: product.shopName || product.shop_name
+            existingShopName: product.shopName || product.shop_name,
+            existingPrice: product.price
         });
         await updateProductSnapshot(productId, sanitizedProductData, now);
         await upsertDailySnapshot(productId, sanitizedProductData, now);
