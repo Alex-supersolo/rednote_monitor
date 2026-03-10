@@ -109,7 +109,11 @@ const LOW_QUALITY_NAME_KEYWORDS = [
     '进店逛逛',
     '联系客服',
     '店铺主页',
-    '全部商品'
+    '全部商品',
+    '图文详情',
+    '规格参数',
+    '优惠券',
+    '券后价'
 ];
 
 // 中间件
@@ -605,8 +609,10 @@ async function processXhsUrl(inputText, options = {}) {
 }
 
 // 解析销量数字（处理万+格式）
-function parseSalesNumber(salesText) {
-    if (!salesText) return 0;
+function parseSalesCandidates(salesText, options = {}) {
+    if (!salesText) {
+        return [];
+    }
 
     const normalizeSalesByUnit = (numberPart, unitPart = '') => {
         const numeric = Number(numberPart);
@@ -634,38 +640,93 @@ function parseSalesNumber(salesText) {
         .replace(/\s+/g, ' ')
         .trim();
     if (!text) {
-        return 0;
+        return [];
     }
+
+    const unique = new Set();
+    const results = [];
+    const pushCandidate = (value) => {
+        const normalized = normalizeSalesByUnit(value[0], value[1] || '');
+        if (normalized <= 0 || unique.has(normalized)) {
+            return;
+        }
+        unique.add(normalized);
+        results.push(normalized);
+    };
 
     const soldMatches = Array.from(text.matchAll(/已售\s*([0-9]{1,8}(?:\.[0-9]{1,2})?)\s*([万千]?)/g));
     for (const match of soldMatches) {
-        const normalized = normalizeSalesByUnit(match[1], match[2] || '');
-        if (normalized > 0) {
-            return normalized;
-        }
+        pushCandidate([match[1], match[2]]);
     }
 
     const unitMatches = Array.from(text.matchAll(/([0-9]{1,8}(?:\.[0-9]{1,2})?)\s*([万千])/g));
     for (const match of unitMatches) {
-        const normalized = normalizeSalesByUnit(match[1], match[2] || '');
-        if (normalized > 0) {
-            return normalized;
-        }
+        pushCandidate([match[1], match[2]]);
     }
 
-    if (text.includes('万') || text.includes('千')) {
-        return 0;
+    const allowPlain = options.allowPlain !== false;
+    if (!allowPlain || text.includes('万') || text.includes('千')) {
+        return results;
     }
 
     const plainMatches = Array.from(text.matchAll(/\b([0-9]{1,8})\b/g));
     for (const match of plainMatches) {
-        const normalized = normalizeSalesByUnit(match[1], '');
-        if (normalized > 0) {
-            return normalized;
+        pushCandidate([match[1], '']);
+    }
+
+    return results;
+}
+
+function parseSalesNumber(salesText, options = {}) {
+    const candidates = parseSalesCandidates(salesText, options);
+    return candidates.length > 0 ? candidates[0] : 0;
+}
+
+function uniquePositiveSales(values) {
+    const unique = new Set();
+    const result = [];
+    for (const value of values) {
+        const normalized = normalizeSalesMetric(value);
+        if (normalized > 0 && !unique.has(normalized)) {
+            unique.add(normalized);
+            result.push(normalized);
+        }
+    }
+    return result;
+}
+
+function resolveSalesMetrics(productCandidateInputs = [], shopCandidateInputs = []) {
+    const productCandidates = uniquePositiveSales(productCandidateInputs);
+    const shopCandidates = uniquePositiveSales(shopCandidateInputs);
+
+    let productSales = productCandidates.length > 0 ? productCandidates[0] : 0;
+    let shopSales = shopCandidates.length > 0 ? shopCandidates[0] : 0;
+
+    if (productCandidates.length >= 2 && productCandidates[0] > productCandidates[1] * 20) {
+        productSales = productCandidates[1];
+    }
+
+    if (shopCandidates.length >= 2 && shopSales < productSales && shopCandidates[1] >= productSales) {
+        shopSales = shopCandidates[1];
+    }
+
+    if (shopSales === 0 && productSales > 0) {
+        shopSales = productSales;
+    }
+
+    if (productSales > 0 && shopSales > 0 && productSales > shopSales) {
+        const fallbackProduct = productCandidates.find(value => value <= shopSales);
+        if (fallbackProduct) {
+            productSales = fallbackProduct;
+        } else {
+            shopSales = productSales;
         }
     }
 
-    return 0;
+    return {
+        productSales: normalizeSalesMetric(productSales),
+        shopSales: normalizeSalesMetric(Math.max(shopSales, productSales))
+    };
 }
 
 function normalizePriceMetric(value) {
@@ -850,9 +911,9 @@ async function applySnapshotGuard(productId, productData, contextLabel = 'snapsh
         }
     }
 
-    if (sanitized.shopSales === 0 && prevShopSales > 0 && sanitized.productSales > 0) {
-        sanitized.shopSales = prevShopSales;
-        reasons.push(`shopSales 0 -> ${prevShopSales}`);
+    if (sanitized.shopSales === 0 && sanitized.productSales > 0) {
+        sanitized.shopSales = sanitized.productSales;
+        reasons.push(`shopSales 0 -> ${sanitized.productSales}`);
     }
 
     if (prevProductSales > 0) {
@@ -904,7 +965,7 @@ async function applySnapshotGuard(productId, productData, contextLabel = 'snapsh
     }
 
     if (sanitized.shopSales > 0 && sanitized.productSales > sanitized.shopSales) {
-        sanitized.shopSales = Math.max(sanitized.productSales, prevShopSales);
+        sanitized.shopSales = sanitized.productSales;
         reasons.push(`shopSales raised to ${sanitized.shopSales}`);
     }
 
@@ -1213,6 +1274,28 @@ async function scrapeProductData(url, options = {}) {
                 return 0;
             };
 
+            const extractSalesTokens = (value) => {
+                const text = String(value || '')
+                    .replace(/\u00a0/g, ' ')
+                    .replace(/,/g, '')
+                    .replace(/\+/g, '')
+                    .trim();
+                if (!text) {
+                    return [];
+                }
+
+                const strictMatches = Array.from(text.matchAll(/已售\s*([0-9]{1,8}(?:\.[0-9]{1,2})?\s*[万千]?)/g))
+                    .map(match => String(match[1] || '').replace(/\s+/g, '').trim())
+                    .filter(Boolean);
+                if (strictMatches.length > 0) {
+                    return strictMatches;
+                }
+
+                return Array.from(text.matchAll(/([0-9]{1,8}(?:\.[0-9]{1,2})?\s*[万千])/g))
+                    .map(match => String(match[1] || '').replace(/\s+/g, '').trim())
+                    .filter(Boolean);
+            };
+
             // 商品名称 - 扩展更多选择器
             const name = getTextBySelectors([
                 'h1',
@@ -1307,6 +1390,14 @@ async function scrapeProductData(url, options = {}) {
 
             // 从页面文本中直接查找商品名称
             console.log('页面文本前500字符:', pageText.substring(0, 500));
+            const shopAnchorMatch = pageText.match(/(卖家口碑|粉丝数|进店逛逛|店铺推荐|店铺信息)/);
+            const shopAnchorIndex = shopAnchorMatch ? pageText.indexOf(shopAnchorMatch[0]) : -1;
+            const headerText = shopAnchorIndex > 0 ? pageText.slice(0, shopAnchorIndex) : pageText;
+            const shopSegmentText = shopAnchorIndex > 0 ? pageText.slice(shopAnchorIndex) : '';
+            const allSalesTokens = extractSalesTokens(pageText);
+            const headerSalesTokens = extractSalesTokens(headerText);
+            const shopSalesTokens = extractSalesTokens(shopSegmentText);
+            const priceSalesTokens = extractSalesTokens(priceText);
 
             // 改进的商品名称提取逻辑
             const namePatterns = [
@@ -1401,9 +1492,9 @@ async function scrapeProductData(url, options = {}) {
             }
 
             // 提取商品销量（寻找"已售"后的数字）
-            const salesMatch = pageText.match(/已售\s*(\d+(?:\.\d+)?[万千]?)/);
-            if (salesMatch) {
-                extractedSales = salesMatch[1];
+            const productSalesToken = headerSalesTokens[0] || priceSalesTokens[0] || '';
+            if (productSalesToken) {
+                extractedSales = productSalesToken;
                 console.log('从文本中提取到商品销量:', extractedSales);
             }
 
@@ -1415,14 +1506,10 @@ async function scrapeProductData(url, options = {}) {
             }
 
             // 提取店铺销量（寻找店铺相关的已售数字）
-            const shopSalesMatches = pageText.match(/已售\s*(\d+(?:\.\d+)?[万千]?)/g);
-            if (shopSalesMatches && shopSalesMatches.length > 1) {
-                // 如果有多个"已售"，第二个通常是店铺销量
-                const shopSalesMatch = shopSalesMatches[1].match(/(\d+(?:\.\d+)?[万千]?)/);
-                if (shopSalesMatch) {
-                    extractedShopSales = shopSalesMatch[1];
-                    console.log('从文本中提取到店铺销量:', extractedShopSales);
-                }
+            const shopSalesToken = shopSalesTokens[0] || (allSalesTokens.length > 1 ? allSalesTokens[allSalesTokens.length - 1] : '');
+            if (shopSalesToken) {
+                extractedShopSales = shopSalesToken;
+                console.log('从文本中提取到店铺销量:', extractedShopSales);
             }
 
             // 使用提取到的信息，优先使用智能提取的结果
@@ -1451,13 +1538,18 @@ async function scrapeProductData(url, options = {}) {
                 debug: {
                     originalPriceText: priceText,
                     originalSalesText: salesText,
+                    originalShopSalesText: shopSalesText,
                     pageTextSample: pageText.substring(0, 300),
                     extractedInfo: {
                         name: extractedName,
                         price: extractedPrice,
                         sales: extractedSales,
                         shopName: extractedShopName,
-                        shopSales: extractedShopSales
+                        shopSales: extractedShopSales,
+                        allSalesTokens,
+                        headerSalesTokens,
+                        shopSalesTokens,
+                        priceSalesTokens
                     }
                 }
             };
@@ -1465,12 +1557,49 @@ async function scrapeProductData(url, options = {}) {
 
         console.log('提取到的原始数据:', data);
 
-        const selectorProductSales = parseSalesNumber(data.salesText);
-        const extractedProductSales = parseSalesNumber(data.debug?.extractedInfo?.sales);
-        const selectorShopSales = parseSalesNumber(data.shopSalesText);
-        const extractedShopSales = parseSalesNumber(data.debug?.extractedInfo?.shopSales);
-        const normalizedProductSales = selectorProductSales > 0 ? selectorProductSales : extractedProductSales;
-        const normalizedShopSales = selectorShopSales > 0 ? selectorShopSales : extractedShopSales;
+        const headerSalesCandidates = Array.isArray(data.debug?.extractedInfo?.headerSalesTokens)
+            ? data.debug.extractedInfo.headerSalesTokens.flatMap(token => parseSalesCandidates(token))
+            : [];
+        const shopSegmentSalesCandidates = Array.isArray(data.debug?.extractedInfo?.shopSalesTokens)
+            ? data.debug.extractedInfo.shopSalesTokens.flatMap(token => parseSalesCandidates(token))
+            : [];
+        const allSalesCandidates = Array.isArray(data.debug?.extractedInfo?.allSalesTokens)
+            ? data.debug.extractedInfo.allSalesTokens.flatMap(token => parseSalesCandidates(token))
+            : [];
+        const priceAreaSalesCandidates = Array.isArray(data.debug?.extractedInfo?.priceSalesTokens)
+            ? data.debug.extractedInfo.priceSalesTokens.flatMap(token => parseSalesCandidates(token))
+            : [];
+        const selectorProductSalesCandidates = parseSalesCandidates(data.salesText, { allowPlain: false });
+        const selectorShopSalesCandidates = parseSalesCandidates(data.shopSalesText, { allowPlain: false });
+        const extractedProductSalesCandidate = parseSalesNumber(data.debug?.extractedInfo?.sales);
+        const extractedShopSalesCandidate = parseSalesNumber(data.debug?.extractedInfo?.shopSales);
+        const fallbackProductFromSelector = parseSalesNumber(data.debug?.originalSalesText, { allowPlain: false });
+        const fallbackShopFromSelector = parseSalesNumber(data.debug?.originalShopSalesText, { allowPlain: false });
+
+        const strongProductSalesCandidates = uniquePositiveSales([
+            ...headerSalesCandidates,
+            ...priceAreaSalesCandidates,
+            extractedProductSalesCandidate,
+            ...selectorProductSalesCandidates,
+            fallbackProductFromSelector
+        ]);
+        const weakProductSalesCandidates = strongProductSalesCandidates.length > 0
+            ? allSalesCandidates.slice(1)
+            : allSalesCandidates;
+
+        const { productSales: normalizedProductSales, shopSales: normalizedShopSales } = resolveSalesMetrics(
+            [
+                ...strongProductSalesCandidates,
+                ...weakProductSalesCandidates
+            ],
+            [
+                ...shopSegmentSalesCandidates,
+                extractedShopSalesCandidate,
+                ...selectorShopSalesCandidates,
+                ...allSalesCandidates.slice(1),
+                fallbackShopFromSelector
+            ]
+        );
         const normalizedPrice = parsePriceNumberFromText(data.price)
             || parsePriceNumberFromText(data.debug?.originalPriceText)
             || normalizePriceMetric(data.debug?.extractedInfo?.price);
