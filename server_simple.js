@@ -832,14 +832,6 @@ function choosePreferredValue(candidates, validator, fallback = '') {
             return normalized;
         }
     }
-
-    for (const candidate of candidates) {
-        const normalized = normalizeTextCandidate(candidate);
-        if (normalized) {
-            return normalized;
-        }
-    }
-
     return fallback;
 }
 
