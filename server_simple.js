@@ -1301,6 +1301,10 @@ async function scrapeProductData(url, options = {}) {
                 '[data-testid*="title"]',
                 '[data-testid*="name"]'
             ], '商品名称');
+            const documentTitle = String(document.title || '')
+                .replace(/\s*[-_|]\s*小红书.*$/i, '')
+                .replace(/\s*-\s*rednote.*$/i, '')
+                .trim();
 
             // 商品价格 - 扩展更多选择器
             const priceText = getTextBySelectors([
@@ -1715,6 +1719,33 @@ async function refreshProductsBatch(productsToRefresh, options = {}) {
                         options.onProgress(result, { successCount, failCount });
                     }
                     console.error(`❌ 商品 ${product.name} 刷新失败:`, error.message);
+                }
+            }
+
+            if (extractedName === '未知商品') {
+                const specNameMatch = pageText.match(/商品名称\s*\n([^\n]{4,180})/);
+                if (specNameMatch) {
+                    const candidateName = String(specNameMatch[1] || '').trim();
+                    if (!candidateName.includes('卖家口碑')
+                        && !candidateName.includes('粉丝数')
+                        && !candidateName.includes('进店逛逛')
+                        && !candidateName.includes('已售')
+                        && !candidateName.includes('¥')
+                        && candidateName.length > 4
+                        && candidateName.length < 180) {
+                        extractedName = candidateName;
+                        console.log('从规格参数中提取到商品名称:', extractedName);
+                    }
+                }
+            }
+
+            if (extractedName === '未知商品' && documentTitle) {
+                if (!documentTitle.includes('卖家口碑')
+                    && !documentTitle.includes('小红书')
+                    && documentTitle.length > 4
+                    && documentTitle.length < 180) {
+                    extractedName = documentTitle;
+                    console.log('从页面标题中提取到商品名称:', extractedName);
                 }
             }
         } finally {
