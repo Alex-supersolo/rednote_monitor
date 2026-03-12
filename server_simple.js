@@ -878,7 +878,11 @@ async function applySnapshotGuard(productId, productData, contextLabel = 'snapsh
     try {
         const trendSource = await getTrendData(productId);
         const rows = Array.isArray(trendSource?.salesRows) ? trendSource.salesRows : [];
-        previousSnapshot = rows.length > 0 ? rows[rows.length - 1] : null;
+        const guardDateKey = String(options.guardDateKey || formatGuardDateKey(options.now || new Date())).trim();
+        const historyRows = guardDateKey
+            ? rows.filter(row => String(row?.crawl_date || '').slice(0, 10) < guardDateKey)
+            : rows;
+        previousSnapshot = historyRows.length > 0 ? historyRows[historyRows.length - 1] : null;
     } catch (error) {
         console.warn(`[snapshot-guard] 读取历史快照失败 (product=${productId}): ${error.message}`);
         return sanitized;
@@ -1004,6 +1008,16 @@ function hasResolvedCategory(category) {
 function parseTimestampToMs(value) {
     const timestamp = Date.parse(String(value || ''));
     return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+function formatGuardDateKey(date = new Date()) {
+    const formatter = new Intl.DateTimeFormat('en-CA', {
+        timeZone: process.env.TZ || 'Asia/Shanghai',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+    });
+    return formatter.format(date);
 }
 
 function isFailedCategoryRetryCoolingDown(product) {
@@ -1674,7 +1688,8 @@ async function refreshProductsBatch(productsToRefresh, options = {}) {
                         {
                             existingProductName: product.name,
                             existingShopName: product.shop_name || product.shopName,
-                            existingPrice: product.price
+                            existingPrice: product.price,
+                            now
                         }
                     );
                     await updateProductSnapshot(product.id, sanitizedProductData, now);
@@ -2351,7 +2366,8 @@ app.post('/api/products/:id/refresh', requireAdminAuth, async (req, res) => {
         const sanitizedProductData = await applySnapshotGuard(productId, productData, 'single-refresh', {
             existingProductName: product.name,
             existingShopName: product.shopName || product.shop_name,
-            existingPrice: product.price
+            existingPrice: product.price,
+            now
         });
         await updateProductSnapshot(productId, sanitizedProductData, now);
         await upsertDailySnapshot(productId, sanitizedProductData, now);
