@@ -659,6 +659,11 @@ function parseSalesCandidates(salesText, options = {}) {
         pushCandidate([match[1], match[2]]);
     }
 
+    const strictSold = options.strictSold === true;
+    if (strictSold) {
+        return results;
+    }
+
     const unitMatches = Array.from(text.matchAll(/([0-9]{1,8}(?:\.[0-9]{1,2})?)\s*([万千])/g));
     for (const match of unitMatches) {
         pushCandidate([match[1], match[2]]);
@@ -1279,13 +1284,7 @@ async function scrapeProductData(url, options = {}) {
                 const strictMatches = Array.from(text.matchAll(/已售\s*([0-9]{1,8}(?:\.[0-9]{1,2})?\s*[万千]?)/g))
                     .map(match => String(match[1] || '').replace(/\s+/g, '').trim())
                     .filter(Boolean);
-                if (strictMatches.length > 0) {
-                    return strictMatches;
-                }
-
-                return Array.from(text.matchAll(/([0-9]{1,8}(?:\.[0-9]{1,2})?\s*[万千])/g))
-                    .map(match => String(match[1] || '').replace(/\s+/g, '').trim())
-                    .filter(Boolean);
+                return strictMatches;
             };
 
             // 商品名称 - 扩展更多选择器
@@ -1565,12 +1564,12 @@ async function scrapeProductData(url, options = {}) {
         const priceAreaSalesCandidates = Array.isArray(data.debug?.extractedInfo?.priceSalesTokens)
             ? data.debug.extractedInfo.priceSalesTokens.flatMap(token => parseSalesCandidates(token))
             : [];
-        const selectorProductSalesCandidates = parseSalesCandidates(data.salesText, { allowPlain: false });
-        const selectorShopSalesCandidates = parseSalesCandidates(data.shopSalesText, { allowPlain: false });
+        const selectorProductSalesCandidates = parseSalesCandidates(data.salesText, { allowPlain: false, strictSold: true });
+        const selectorShopSalesCandidates = parseSalesCandidates(data.shopSalesText, { allowPlain: false, strictSold: true });
         const extractedProductSalesCandidate = parseSalesNumber(data.debug?.extractedInfo?.sales);
         const extractedShopSalesCandidate = parseSalesNumber(data.debug?.extractedInfo?.shopSales);
-        const fallbackProductFromSelector = parseSalesNumber(data.debug?.originalSalesText, { allowPlain: false });
-        const fallbackShopFromSelector = parseSalesNumber(data.debug?.originalShopSalesText, { allowPlain: false });
+        const fallbackProductFromSelector = parseSalesNumber(data.debug?.originalSalesText, { allowPlain: false, strictSold: true });
+        const fallbackShopFromSelector = parseSalesNumber(data.debug?.originalShopSalesText, { allowPlain: false, strictSold: true });
 
         const strongProductSalesCandidates = uniquePositiveSales([
             ...headerSalesCandidates,
